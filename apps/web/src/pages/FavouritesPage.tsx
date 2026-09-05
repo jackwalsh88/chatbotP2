@@ -56,7 +56,21 @@ function FavouriteTile({ character }: { character: PublicPlayWithMeCard }) {
       data-testid="favourite-tile"
       className="group relative block aspect-[3/4] overflow-hidden rounded-2xl border border-white/5 bg-zinc-900"
     >
-      <HeroMedia media={media} alt={character.displayName} lazy />
+      {/*
+        CROP TOWARD THE HEAD, not through it.
+
+        The same 3:4 portrait card the Play with me rail uses, so it had the
+        same defect: `object-cover` discards 12-26% of a portrait clip's height
+        and the CSS default split it evenly, taking up to 12.5% off the TOP --
+        which is where the face is.
+
+        `upper` anchors at 12%, the one value shared with the rail and the Home
+        hero, so a character is framed the same way wherever she appears. The
+        card's ratio, gradient, heart mark, name, age, chips, lazy loading and
+        link are untouched: this changes only which part of the clip the
+        existing crop keeps.
+      */}
+      <HeroMedia media={media} alt={character.displayName} lazy focal="upper" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-zinc-950 via-zinc-950/50 to-transparent" />
       <span className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-emerald-400 backdrop-blur">
         <LikeIcon width={15} height={15} />

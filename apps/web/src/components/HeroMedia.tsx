@@ -27,11 +27,48 @@ const FIT_CLASS = {
   contain: 'h-full w-full object-contain',
 } as const;
 
+/**
+ * WHERE `object-cover` KEEPS ITS ANCHOR when it has to discard part of a clip.
+ *
+ * Every clip in production is portrait -- measured 9:16 (0.5625), 640x1152
+ * (0.5556), 544x960 (0.5667) and 768x1168 (0.6575) -- and every frame that
+ * renders one is wider than that. `object-cover` fills the width and throws the
+ * vertical overflow away, and the CSS default splits it evenly top and bottom.
+ *
+ * An even split is the wrong default for pictures of people. A portrait clip
+ * puts the head near the top, so half of the overflow lands on the face: in the
+ * Play with me rail's 3:4 card that is 12.5% of a 9:16 clip gone from the top,
+ * which clipped hairlines and foreheads across the rail.
+ *
+ * `upper` anchors at 12% instead of 50%, so about a tenth of the loss comes off
+ * the top and the rest off the floor. The SAME 12% the Home hero uses, so the
+ * two surfaces frame their content alike -- see HeroCarousel, which reaches it
+ * through ClipMedia's `className` because that component takes one.
+ *
+ * ── THE DEFAULT IS UNCHANGED ─────────────────────────────────────────────────
+ *
+ * `center` emits NO object-position class at all, so every existing caller --
+ * the swipe card, the profile hero, the media viewer, the favourites tile --
+ * renders byte-for-byte what it rendered before. This is opt-in per surface
+ * because the right anchor depends on how much the frame actually crops, and
+ * only the caller knows its own shape.
+ *
+ * The class strings are literal for the same reason `FIT_CLASS` above is:
+ * Tailwind scans source text, so an interpolated value would be purged.
+ */
+const FOCAL_CLASS = {
+  center: '',
+  upper: 'object-[center_12%]',
+} as const;
+
+export type HeroMediaFocal = keyof typeof FOCAL_CLASS;
+
 export default function HeroMedia({
   media,
   alt,
   className,
   fit = 'cover',
+  focal = 'center',
   lazy = false,
 }: {
   media: HeroMediaModel;
@@ -49,6 +86,12 @@ export default function HeroMedia({
    * seen whole rather than cropped to a card's shape.
    */
   fit?: 'cover' | 'contain';
+  /**
+   * Which part of an over-tall clip survives the crop. Defaults to `center`,
+   * the CSS default and what every pre-existing caller gets. A surface whose
+   * frame crops far enough to reach a face opts into `upper`.
+   */
+  focal?: HeroMediaFocal;
   /**
    * OPT-IN deferred loading, for surfaces that mount many of these at once.
    *
@@ -126,7 +169,7 @@ export default function HeroMedia({
           onCanPlay={() => setReady(true)}
           onLoadedData={() => setReady(true)}
           onError={() => setVideoFailed(true)}
-          className={FIT_CLASS[fit]}
+          className={`${FIT_CLASS[fit]} ${FOCAL_CLASS[focal]}`.trim()}
         />
       ) : showImage && effectiveImage ? (
         <img
@@ -136,7 +179,7 @@ export default function HeroMedia({
           loading="lazy"
           onLoad={() => setReady(true)}
           onError={() => setImageFailed(true)}
-          className={FIT_CLASS[fit]}
+          className={`${FIT_CLASS[fit]} ${FOCAL_CLASS[focal]}`.trim()}
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-950">

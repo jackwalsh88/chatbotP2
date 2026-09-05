@@ -47,8 +47,29 @@ export default function HeroCarousel({ clips }: { clips: PublicClip[] }) {
         onScroll={onScroll}
         className="flex snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
+        {/*
+          SQUARE, NOT 16:11 -- the banner ZOOMS OUT rather than cropping harder.
+
+          Every clip in production is portrait: measured 9:16 (0.5625),
+          640x1152 (0.5556), 544x960 (0.5667) and 768x1168 (0.6575). A 16:11
+          band shows only 39% of a 9:16 clip's height, and `object-cover` split
+          that loss evenly, so 30.7% came off the TOP -- exactly where the face
+          is. On the live Home page Camila and Karen were both cropped to a chin.
+
+          Re-anchoring the crop alone was tried and rejected: it rescues the head
+          but leaves a head-and-shoulders sliver, which is not what a hero should
+          show. Making the frame taller is the actual fix -- 1:1 shows 56% of the
+          clip instead of 39%, so the whole subject reads, head and torso.
+
+          WHY 1:1 AND NOT TALLER. 4:5 and 3:4 show still more, and at 375px wide
+          they are 469px and 500px tall: the "Play with me" rail below drops off
+          the first screen. A square hero is 375px, keeps the rail visible, and
+          is still a 45% gain in visible clip. It is also the largest ratio that
+          never letterboxes -- wider than every clip, so `object-cover` fills it
+          edge to edge with no side gutters at any viewport width.
+        */}
         {clips.map((clip, i) => (
-          <div key={clip.id} className="relative aspect-[16/11] w-full shrink-0 snap-center">
+          <div key={clip.id} className="relative aspect-square w-full shrink-0 snap-center">
             <div className="absolute inset-0">
               {/* ONLY THE ACTIVE SLIDE PLAYS. All three used to autoplay at
                   once: measured at readyState=4 with slides 2 and 3 decoding
@@ -56,7 +77,33 @@ export default function HeroCarousel({ clips }: { clips: PublicClip[] }) {
                   still LOADS via ClipMedia's viewport margin, so swiping to it
                   finds bytes already arriving. Dimensions, crop, gradient,
                   overlay and scroll-snap are untouched. */}
-              <ClipMedia clip={clip} autoPlay active={i === active} />
+              {/*
+                THE REMAINING CROP COMES OFF THE BOTTOM.
+
+                A square frame still discards ~44% of a 9:16 clip, and centring
+                that would take 21.9% off the top -- enough to cut a face on
+                content framed as tightly as Camila's. Anchoring at 12% takes
+                5.3% from the top and the rest from the floor, which is what
+                nobody is looking at.
+
+                12% RATHER THAN 0%. Top-aligning wastes the frame on clips that
+                carry headroom above the subject; 12% keeps a little of it and
+                still clears the head on the tightest clip in production.
+                Verified on all three assigned hero clips.
+
+                THE OVERRIDE LIVES HERE, NOT IN ClipMedia. `className` is the
+                prop that component already exposes for this (FeedView uses it
+                for `object-contain`), so the shared default is untouched and no
+                other surface -- the clip grid, the rails, Posts, Play with me --
+                changes at all. The right framing depends on the frame's shape,
+                and only the caller knows that.
+              */}
+              <ClipMedia
+                clip={clip}
+                autoPlay
+                active={i === active}
+                className="h-full w-full object-cover object-[center_12%]"
+              />
             </div>
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 flex flex-col items-start gap-2 p-5">

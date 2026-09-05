@@ -95,11 +95,30 @@ describe('the Hero plays only its active slide', () => {
 
   it('keeps every slide, its crop and its scroll-snap geometry', () => {
     const markup = render([clip('h1'), clip('h2'), clip('h3')]);
-    // Three slides, unchanged aspect ratio and snap behaviour.
-    expect(markup.match(/aspect-\[16\/11\]/g)).toHaveLength(3);
+    /**
+     * SQUARE SINCE THE FRAMING FIX. The banner was 16:11, which showed only 39%
+     * of a portrait clip and — with the crop centred — took 30.7% off the top,
+     * removing the face. 1:1 shows 56% and the anchor moves to 12%, so the whole
+     * subject reads. Snap behaviour and slide count are unchanged.
+     */
+    expect(markup.match(/aspect-square/g)).toHaveLength(3);
+    expect(markup).not.toContain('aspect-[16/11]');
+    expect(markup.match(/object-\[center_12%\]/g)).toHaveLength(3);
     expect(markup.match(/snap-center/g)).toHaveLength(3);
     expect(markup).toContain('flex snap-x snap-mandatory overflow-x-auto');
     expect(markup.match(/<video/g)).toHaveLength(3);
+  });
+
+  /**
+   * The banner must stay edge to edge. 1:1 is wider than every production clip
+   * (0.5556-0.6575), so `object-cover` always fills it: no letterboxing, no side
+   * gutters, no narrower video inside the full-width frame.
+   */
+  it('stays full-bleed — cover, never contain', () => {
+    const markup = render([clip('h1')]);
+    expect(markup).toContain('object-cover');
+    expect(markup).not.toContain('object-contain');
+    expect(markup).toContain('w-full');
   });
 
   it('keeps the dot navigation and the approved overlay', () => {

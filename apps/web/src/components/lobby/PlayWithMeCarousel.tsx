@@ -42,7 +42,21 @@ function PlayWithMeCard({ character }: { character: PublicPlayWithMeCard }) {
       {/* Deferred loading: a rail mounts a card per character, and off-screen
           cards were downloading and playing before anyone swiped to them. The
           card, its dimensions and the scroll-snap geometry are unchanged. */}
-      <HeroMedia media={media} alt={character.displayName} lazy />
+      {/*
+        CROP TOWARD THE HEAD, not through it.
+
+        The card is 3:4 and every clip is portrait, so `object-cover` discards
+        12-26% of the clip's height. Split evenly that took up to 12.5% off the
+        TOP -- measured on the live rail, it clipped Camila's and Kiko's
+        hairlines, and the reported screenshot showed the same on Indira.
+
+        `upper` anchors at 12%, leaving ~3% off the top and the rest off the
+        floor. Verified on the live rail: 25% still clipped both heads, 12%
+        cleared them. The card's size, ratio, gradient, chips, lazy loading and
+        link behaviour are untouched -- this changes only which part of the clip
+        the existing crop keeps.
+      */}
+      <HeroMedia media={media} alt={character.displayName} lazy focal="upper" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-zinc-950 via-zinc-950/50 to-transparent" />
       <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 backdrop-blur">
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Online
