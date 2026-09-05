@@ -26,7 +26,6 @@ export type MediaCharacter = Pick<
    */
   clip?: { url: string; mediaType: 'image' | 'video' } | null;
 };
-import { characterHeroVideo, characterVideoItems } from './characterMedia';
 import { API_URL } from './api';
 
 /**
@@ -187,16 +186,22 @@ export function resolveHeroMedia(
   visual?: CharacterVisualIdentityResponse | null,
 ): HeroMedia {
   const override = DEMO_MEDIA_OVERRIDES[character.id];
-  // Real approved local clip (US-29) is the video-first source when present, so
-  // the character's video loads across Lobby / Discovery / Profile. A future API
-  // `videoUrl`, a PoC override and the CMS's own clip all take precedence.
-  const localHero = characterHeroVideo(character);
+  /**
+   * THE BUNDLED MANIFEST IS GONE FROM THIS CHAIN.
+   *
+   * `characterHeroVideo` used to sit at the end of it, so a character whose
+   * stable slug matched one of four PoC names was served a demo file from
+   * `/media/<name>/` as though it were hers. That is not published content, and
+   * it mis-attributed: a character with slug `ember` and display name "Amber"
+   * got Ember's clips. The video sources that remain are an explicit PoC
+   * override (empty by default), a future API field, and the CMS's own clip.
+   */
   const videoUrl =
-    override?.videoUrl ?? characterVideoUrl(character) ?? cmsVideoUrl(character) ?? localHero?.src;
+    override?.videoUrl ?? characterVideoUrl(character) ?? cmsVideoUrl(character);
   const stillImage = firstCanonicalImage(visual) ?? character.profileImage ?? undefined;
 
   if (videoUrl) {
-    const poster = override?.poster ?? localHero?.poster ?? stillImage;
+    const poster = override?.poster ?? stillImage;
     return poster ? { kind: 'video', src: videoUrl, poster } : { kind: 'video', src: videoUrl };
   }
 
@@ -349,13 +354,19 @@ export function characterHeaderItems(
   }
   if (videos.length > 0) return videos;
 
-  // 2. The bundled manifest, for a seeded character with nothing uploaded yet.
-  const manifest = characterVideoItems(character);
-  if (manifest.length > 0) return manifest;
-
-  // 3. The pre-existing fallback, untouched: her canonical still, then her
-  //    profileImage, then the initial-letter placeholder. No new artwork, and
-  //    no unrelated image is substituted.
+  /**
+   * 2. Her IDENTITY still: the canonical reference, then `profileImage`, then
+   *    an initial-letter tile so the header can never be an empty frame.
+   *
+   * THE BUNDLED MANIFEST USED TO SIT ABOVE THIS, and it is removed. It served
+   * demo files to any character whose slug matched one of four PoC names,
+   * outranking her identity image with content that was not hers.
+   *
+   * WHAT REMAINS IS AN AVATAR, NOT A POST. The header is the one place a
+   * character's own portrait is the right thing to show when she has published
+   * nothing yet, and it is never presented as content: Posts lists her released
+   * clips and nothing else, so a still here can never be mistaken for one.
+   */
   return [{ id: 'hero', media: resolveHeroMedia(character, visual), premium: false }];
 }
 

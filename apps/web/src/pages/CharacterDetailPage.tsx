@@ -254,11 +254,7 @@ export default function CharacterDetailPage() {
         <ProfileTabs active={tab} onChange={setTab} postsCount={clips.length} />
 
         {tab === 'about' ? (
-          <AboutTab
-            character={character}
-            attributes={attributes}
-            onOpenClip={(index) => setViewer({ items: heroItems, index })}
-          />
+          <AboutTab character={character} attributes={attributes} />
         ) : (
           <PostsTab
             clips={clips}

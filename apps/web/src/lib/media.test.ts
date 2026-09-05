@@ -190,28 +190,35 @@ describe('a character’s CMS clip can be her card video', () => {
   });
 });
 
-describe('the seeded characters keep working', () => {
-  it('Luna still plays her MANIFEST clip when her CMS clip is an image', () => {
-    // Her representative clip is a canonical image, so nothing here supplies a
-    // CMS video and the manifest is still what plays. This is the regression
-    // that would break Maria/Ember/Luna if the precedence were wrong.
+/**
+ * THE BUNDLED PoC MANIFEST IS GONE, and these pin its absence.
+ *
+ * `characterMedia.ts` mapped four slugs -- luna, ember, sage, maria -- to demo
+ * files under `/media/<name>/`. It was keyed on `character.name`, so a
+ * character whose slug was `ember` and whose display name was "Amber" was
+ * served Ember's clips under Amber's name. Reported from production.
+ *
+ * A seeded slug now resolves exactly like any other character: her CMS clip if
+ * she has one, otherwise her identity still. No file under `/media/` can reach
+ * any surface through this module.
+ */
+describe('the bundled PoC manifest cannot be resolved any more', () => {
+  it('a seeded slug with an IMAGE clip gets her image, not a demo video', () => {
     const media = resolveHeroMedia(character({ name: 'luna', clip: clip('image') } as never));
-    expect(media.kind).toBe('video');
-    expect(media.kind === 'video' && media.src).toBe('/media/luna/profile-04.mp4');
+    expect(media.kind).not.toBe('video');
+    expect(JSON.stringify(media)).not.toContain('/media/luna');
   });
 
-  it('Luna with NO clip at all is unchanged', () => {
+  it('a seeded slug with NO clip falls to her identity still, not a demo video', () => {
     const media = resolveHeroMedia(character({ name: 'luna' }));
-    expect(media.kind === 'video' && media.src).toBe('/media/luna/profile-04.mp4');
+    expect(media.kind).toBe('image');
+    expect(JSON.stringify(media)).not.toContain('/media/');
   });
 
-  it('Ember and Maria still resolve their own manifest clips', () => {
-    for (const [name, src] of [
-      ['ember', '/media/ember/hero.mp4'],
-      ['maria', '/media/maria/hero.mp4'],
-    ] as const) {
+  it('no seeded slug can produce a bundled file', () => {
+    for (const name of ['luna', 'ember', 'sage', 'maria'] as const) {
       const media = resolveHeroMedia(character({ name, clip: clip('image') } as never));
-      expect(media.kind === 'video' && media.src).toBe(src);
+      expect(JSON.stringify(media)).not.toContain('/media/' + name);
     }
   });
 
@@ -305,8 +312,10 @@ describe('the OTHER surfaces keep their image behaviour', () => {
     expect(media.kind === 'image' && media.src).toContain('/assets/i1/file');
   });
 
-  it('resolveHeroMedia still serves the seeded manifest videos', () => {
-    expect(resolveHeroMedia(character({ name: 'luna' })).kind).toBe('video');
+  it('resolveHeroMedia no longer serves the seeded manifest videos', () => {
+    // It used to return kind 'video' pointing at /media/luna/profile-04.mp4.
+    const media = resolveHeroMedia(character({ name: 'luna' }));
+    expect(media.kind).not.toBe('video');
   });
 });
 
@@ -377,14 +386,14 @@ describe('the Character header plays her own videos', () => {
     expect(items[0]!.media.kind).toBe('placeholder');
   });
 
-  it('uses the manifest for a seeded character who has NO CMS video yet', () => {
-    // luna/ember/sage/maria ship real files on disk. The manifest is a
-    // fallback now, not a deletion — a seeded character with nothing uploaded
-    // must not lose her header to a still.
+  it('gives a seeded character with NO CMS video her identity still, not a demo file', () => {
+    // This used to return /media/luna/profile-04.mp4 from the bundled manifest.
+    // The header now shows her own avatar, which is an identity image and is
+    // never presented as a post.
     const items = characterHeaderItems(character({ name: 'luna' }), [], null);
     expect(items).toHaveLength(1);
-    const only = items[0]!.media;
-    expect(only.kind === 'video' && only.src).toBe('/media/luna/profile-04.mp4');
+    expect(items[0]!.media.kind).toBe('image');
+    expect(JSON.stringify(items[0]!.media)).not.toContain('/media/luna');
   });
 });
 
@@ -436,15 +445,17 @@ describe('a real CMS video beats the bundled manifest', () => {
     });
   }
 
-  it('falls back to the manifest the moment her CMS videos are all images', () => {
-    // The ordering must not be "CMS list is non-empty" — it must be "CMS list
-    // contains a VIDEO". An image-only collection is not a header.
+  it('an image-only CMS collection is still not a header, and gets no demo file', () => {
+    // The ordering must not be "CMS list is non-empty" -- it must be "CMS list
+    // contains a VIDEO". An image-only collection is not a header. It used to
+    // fall through to /media/ember/hero.mp4; it now falls to her own still.
     const items = characterHeaderItems(
       character({ name: 'ember' }),
       [headerClip('an-image', 'image')],
       null,
     );
-    expect(items[0]!.media.kind === 'video' && items[0]!.media.src).toBe('/media/ember/hero.mp4');
+    expect(items[0]!.media.kind).not.toBe('video');
+    expect(JSON.stringify(items[0]!.media)).not.toContain('/media/ember');
   });
 
   it('keeps the still fallback for a character with neither', () => {
@@ -466,9 +477,12 @@ describe('resolveHeroMedia is NOT affected by the header precedence change', () 
    * behaviour so a future edit cannot quietly move Home Hero, Play with me or
    * the swipe deck while "fixing the header".
    */
-  it('still serves the manifest clip for a seeded character', () => {
+  it('serves NO manifest clip for a seeded character', () => {
+    // Previously /media/ember/hero.mp4. The bundled manifest is deleted, so a
+    // seeded slug resolves to her own identity image like anyone else.
     const media = resolveHeroMedia(character({ name: 'ember' }));
-    expect(media.kind === 'video' && media.src).toBe('/media/ember/hero.mp4');
+    expect(media.kind).not.toBe('video');
+    expect(JSON.stringify(media)).not.toContain('/media/ember');
   });
 
   it('still prefers a CMS clip over the manifest, exactly as it always has', () => {

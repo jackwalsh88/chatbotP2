@@ -1,59 +1,40 @@
 import type { PublicCharacter, PublicVisualIdentityAttribute } from '@over18/shared';
-import { characterVideos } from '../../lib/characterMedia';
 
 /**
- * About tab (US-29 / brief §2): bio, personality/conversation style, a
- * structured attribute grid (from the public Visual Identity), interests, and a
- * horizontally scrolling THEMATIC media rail built from the character's real
- * additional clips — genuine in-character content with human labels, not demo
- * tiles. Tapping a clip opens the shared media viewer.
+ * About tab: bio, personality/conversation style, a structured attribute grid
+ * from the public Visual Identity, and interests. TEXT AND ATTRIBUTES ONLY —
+ * it renders no media at all.
+ *
+ * ── WHAT WAS REMOVED, AND WHY ────────────────────────────────────────────────
+ *
+ * A "More of {displayName}" rail used to sit here, built from
+ * `characterVideos` — the hard-coded four-name PoC manifest keyed on
+ * `character.name`. It described itself as "the character's real additional
+ * clips", and it was never that: the entries are bundled demo files under
+ * `/media/<name>/`, unrelated to anything an operator published.
+ *
+ * IT ALSO MIS-ATTRIBUTED. The manifest is keyed on the stable slug, so a
+ * character whose slug is `ember` but whose display name is "Amber" was served
+ * Ember's demo clips under Amber's heading — reported from production, showing
+ * tiles labelled "Off the clock" and "Late night" on Amber's page.
+ *
+ * IT IS NOT REPLACED WITH A SECOND POSTS GALLERY. Posts is the character's one
+ * complete collection of released clips; a second rail of the same content
+ * would only invite the two to disagree. About is prose and facts, Posts is
+ * media, and the Hero is her current clips.
  */
 export default function AboutTab({
   character,
   attributes,
-  onOpenClip,
 }: {
   character: PublicCharacter;
   attributes: PublicVisualIdentityAttribute[];
-  /** Opens the media viewer at the given clip index (into the full clip set). */
-  onOpenClip: (index: number) => void;
 }) {
-  const videos = characterVideos(character);
-  const thematic = videos.map((v, i) => ({ ...v, index: i })).filter((v) => v.role !== 'hero');
-
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4">
         <p className="text-sm leading-relaxed text-zinc-200">{character.shortBio}</p>
       </div>
-
-      {thematic.length > 0 && (
-        <section aria-label="Media">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            More of {character.displayName}
-          </h3>
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {thematic.map((clip) => (
-              <button
-                key={clip.src}
-                type="button"
-                onClick={() => onOpenClip(clip.index)}
-                aria-label={`Play ${clip.label}`}
-                className="group relative aspect-[3/4] w-32 shrink-0 overflow-hidden rounded-2xl border border-white/5 bg-zinc-900"
-              >
-                <img src={clip.poster} alt={clip.label} loading="lazy" className="h-full w-full object-cover" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent" />
-                <span className="absolute bottom-2 left-2 right-2 truncate text-left text-[11px] font-semibold text-white">
-                  {clip.label}
-                </span>
-                <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-[10px] text-white backdrop-blur">
-                  ▶
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
 
       <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Personality</h3>
