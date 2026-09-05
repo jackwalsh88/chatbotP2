@@ -8,7 +8,12 @@ import {
   homeHeroClips,
   type CharacterVisualAssetRow,
 } from '../db/schema.js';
-import type { ContentRating, VisualAssetStatus } from './visual-asset-service.js';
+import {
+  VisualAssetNotFoundError,
+  VisualAssetTransitionError,
+  type ContentRating,
+  type VisualAssetStatus,
+} from './visual-asset-service.js';
 
 /**
  * US-106 — read model for the content-review workflow.
@@ -349,6 +354,15 @@ export interface CharacterContentAsset {
   placement: AssetPlacement;
   createdAt: string;
   approvedAt: string | null;
+  /**
+   * When this asset was RELEASED to the character's public Posts tab, or null.
+   *
+   * Separate from `approvedAt` on purpose: approving is a moderation verdict
+   * and exposes nothing, releasing is what puts a clip on her page. An operator
+   * looking at this shelf can now tell "passed review" from "live" — a
+   * distinction the screen previously had no way to show.
+   */
+  publishedAt: string | null;
 }
 
 /**
@@ -418,5 +432,65 @@ export async function listCharacterContent(
     },
     createdAt: row.createdAt.toISOString(),
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
+    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Release to the character's Posts tab
+ * ------------------------------------------------------------------ */
+
+/**
+ * Publish or unpublish one asset — the reversible half of the release model.
+ *
+ * WHY IT IS SEPARATE FROM APPROVAL. `approveVisualAsset` records a moderation
+ * verdict and deliberately exposes nothing. This records the editorial one.
+ * Keeping them apart is the entire point of `published_at`: an operator can
+ * approve without releasing, and can pull a clip off her page without
+ * un-approving it, rejecting it, or deleting anything.
+ *
+ * PUBLISHING REQUIRES APPROVAL, and refuses rather than silently approving.
+ * A release time on unmoderated content would put it live the instant someone
+ * approved it, which is exactly the accident this model exists to prevent.
+ *
+ * CONTENT ONLY. A `reference` portrait is identity and a `chat` asset is
+ * private; neither can be a post, so neither can be released. Refusing here as
+ * well as at the read gate means an operator gets an error instead of a silent
+ * no-op, and the stored data never carries a meaningless release time.
+ *
+ * IDEMPOTENT: publishing an already-published asset keeps its ORIGINAL release
+ * time rather than moving it, so "when did this go out?" stays answerable.
+ */
+export async function setAssetPublished(
+  db: Db,
+  assetId: string,
+  published: boolean,
+): Promise<CharacterVisualAssetRow> {
+  const [row] = await db
+    .select()
+    .from(characterVisualAssets)
+    .where(eq(characterVisualAssets.id, assetId))
+    .limit(1);
+  if (!row) throw new VisualAssetNotFoundError(assetId);
+
+  if (published) {
+    if (row.status !== 'approved') {
+      throw new VisualAssetTransitionError(
+        'Only approved content can be published. Approve it in Review first.',
+      );
+    }
+    if (row.kind !== 'generated') {
+      throw new VisualAssetTransitionError(
+        'Only character content can be published to Posts. References are identity, and chat media is private.',
+      );
+    }
+    if (row.publishedAt) return row; // already live — keep the original time
+  }
+
+  const [updated] = await db
+    .update(characterVisualAssets)
+    .set({ publishedAt: published ? new Date() : null, updatedAt: new Date() })
+    .where(eq(characterVisualAssets.id, assetId))
+    .returning();
+  return updated!;
 }

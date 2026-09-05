@@ -30,6 +30,7 @@ import {
   updateAssetMetadata,
   type LibraryAsset,
   type MediaType,
+  setAssetPublished,
 } from '../services/content-review-service.js';
 import {
   ContentInboxError,
@@ -332,6 +333,21 @@ export default async function adminContentRoutes(
         // was ceremony, not safety. The Content Library omits `section` and is
         // therefore untouched.
         approve: shelf !== undefined,
+        /**
+         * AND RELEASED, for the two shelves that ARE her page.
+         *
+         * This is the same editorial decision the line above already trusts,
+         * recorded rather than implied: an operator putting a clip on her
+         * Regular or Explicit shelf means it to appear on her Posts tab. Before
+         * `published_at` existed there was nowhere to write that down, so Posts
+         * fell back to asking whether the clip had been merchandised onto HOME
+         * — a different decision entirely — and hid everything that had not.
+         *
+         * `chat` is excluded because Chat Content is private by construction,
+         * and the Content Library (no `section`) is excluded because uploading
+         * there is explicitly NOT a decision to publish — it lands in Review.
+         */
+        publish: shelf === 'regular' || shelf === 'explicit',
         // Optional, and never defaulted: the operator may say which requirement
         // this satisfies at upload time, or leave it for triage in Review.
         requirementKey,
@@ -843,6 +859,45 @@ export default async function adminContentRoutes(
       }
     },
   );
+
+  /**
+   * RELEASE to the character's Posts tab, and take it back.
+   *
+   * A SEPARATE ACT FROM APPROVAL, deliberately. Approve says the content passed
+   * moderation and exposes nothing; this says it may appear on her page. That
+   * separation is what lets an operator hold approved content back, and pull a
+   * live clip without rejecting or deleting it.
+   *
+   * Two verbs on one path rather than a PATCH with a boolean body, matching the
+   * approve/reject pair directly above: the audit trail then reads as the
+   * decision that was made, not as a field that was set.
+   *
+   * The service refuses to publish anything unapproved, and anything that is
+   * not content — a reference portrait or chat media cannot become a post.
+   */
+  for (const [verb, published] of [
+    ['publish', true],
+    ['unpublish', false],
+  ] as const) {
+    app.post<{ Params: { assetId: string } }>(
+      `/admin/content/assets/:assetId/${verb}`,
+      adminOnly,
+      async (request, reply) => {
+        try {
+          await setAssetPublished(opts.db, request.params.assetId, published);
+          return reply.send(assetView(await getReviewAsset(opts.db, request.params.assetId)));
+        } catch (err) {
+          if (err instanceof VisualAssetNotFoundError) {
+            return reply.code(404).send({ error: 'not_found', message: 'Asset not found.' });
+          }
+          if (err instanceof VisualAssetTransitionError) {
+            return reply.code(409).send({ error: 'invalid_transition', message: err.message });
+          }
+          throw err;
+        }
+      },
+    );
+  }
 
   /**
    * Reject === the operator's "remove". The row, its provenance and its media

@@ -381,6 +381,41 @@ export const characterVisualAssets = pgTable(
     requirementKey: text('requirement_key'),
     approvedBy: uuid('approved_by'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
+    /**
+     * When an operator RELEASED this asset to the character's public Posts tab.
+     * Null means approved-but-not-released, or never released.
+     *
+     * ── APPROVED IS NOT PUBLISHED ────────────────────────────────────────────
+     *
+     * `status = 'approved'` is a MODERATION verdict: the content is acceptable.
+     * It has never meant "the public may see this", and the media route has
+     * always refused an approved asset that no public surface referenced —
+     * "approval alone must not expose the whole Library to id guessing".
+     *
+     * The Posts tab needed a public surface of its own, and the only ones that
+     * existed were PLACEMENTS onto Home: a Hero slot, a published category, a
+     * discovery keyword. Gating her own page on those meant a character with
+     * five approved clips showed the one that happened to be merchandised, and
+     * zero if none was. Measured against the real query: 0 of 5.
+     *
+     * This column is that missing surface, and it keeps the two ideas apart.
+     * Approving still exposes nothing. Releasing is a separate, explicit,
+     * reversible act — which is what makes "approved but not yet live" a state
+     * an operator can actually hold.
+     *
+     * ── WHY A TIMESTAMP AND NOT A BOOLEAN ────────────────────────────────────
+     *
+     * Null versus a time answers "is it live?" exactly as a boolean would, and
+     * also records WHEN — which an operator asking "when did this go out?"
+     * currently has no way to answer. It matches `approvedAt` beside it, so the
+     * two halves of an asset's lifecycle read the same way.
+     *
+     * NOT A STATUS VALUE. Adding 'published' to `visual_asset_status` would
+     * have made release and moderation the same axis, so unpublishing would
+     * have had to un-approve, and every existing status query would silently
+     * change meaning.
+     */
+    publishedAt: timestamp('published_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

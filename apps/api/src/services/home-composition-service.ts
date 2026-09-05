@@ -20,7 +20,11 @@ import { PUBLISHABLE_STATUS, homeRenderableConditions } from './app-merchandisin
 import { PUBLIC_CONTENT_KINDS } from './asset-kinds.js';
 import { mediaTypeOf, videoAssetCondition } from './content-review-service.js';
 import { renderValue } from './visual-read-service.js';
-import { publicAssetUrl, publiclyReachableCondition } from './public-media-service.js';
+import {
+  characterPostsCondition,
+  publicAssetUrl,
+  publiclyReachableCondition,
+} from './public-media-service.js';
 import { listEligibleHomeBanners } from './home-banner-service.js';
 import {
   publicBannerCreativeUrl,
@@ -289,8 +293,25 @@ export async function listPublicCharacterClips(
     .where(
       and(
         eq(characterVisualAssets.characterId, characterId),
-        inArray(characterVisualAssets.kind, [...PUBLIC_CONTENT_KINDS]),
-        publiclyReachableCondition(),
+        /**
+         * HER COLLECTION, NOT HER HOME PLACEMENTS.
+         *
+         * This was `publiclyReachableCondition`, which asks whether an operator
+         * placed the clip on Home, in a published category or behind a
+         * discovery keyword. Posts is her own page, so that gate hid released
+         * content of hers that had simply never been merchandised onto Home —
+         * a character with five approved, released clips showed one.
+         *
+         * The replacement is NOT weaker: it demands `published_at`, so an
+         * approved-but-unreleased clip is still absent, and it carries the kind
+         * allow-list itself — which is why the separate `inArray` here is gone
+         * rather than merely moved. One function now answers "may this appear
+         * on her page?", so the halves of that answer cannot drift apart.
+         *
+         * The media route accepts this same condition, so every clip listed
+         * here can actually be fetched.
+         */
+        characterPostsCondition(),
       ),
     )
     .orderBy(desc(characterVisualAssets.createdAt), asc(characterVisualAssets.id));

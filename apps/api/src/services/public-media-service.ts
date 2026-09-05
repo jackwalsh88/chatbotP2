@@ -14,7 +14,7 @@ import {
 } from '../db/schema.js';
 import { resolveMediaFile, type ResolvedMediaFile } from './message-media-service.js';
 import { PUBLISHABLE_STATUS } from './app-merchandising-service.js';
-import { PUBLICLY_REACHABLE_KINDS } from './asset-kinds.js';
+import { PUBLIC_CONTENT_KINDS, PUBLICLY_REACHABLE_KINDS } from './asset-kinds.js';
 
 /**
  * Public media access (US-102.4).
@@ -164,6 +164,66 @@ export function publiclyReachableCondition() {
  * unknown, unapproved and unreachable alike — every one of them reads as "not
  * found" so the route leaks no existence information.
  */
+/**
+ * HER POSTS TAB — a published clip on the character's own page.
+ *
+ * ── THE BUG THIS FIXES ───────────────────────────────────────────────────────
+ *
+ * `publiclyReachableCondition` above asks a PLACEMENT question: has an operator
+ * put this clip on Home, in a published category, or behind a discovery
+ * keyword? That is the right question for Home, the search grid and the
+ * character rails, which are all placements onto Home.
+ *
+ * It was the wrong question for the Posts tab, which is not a placement — it is
+ * the character's own collection, reached only by someone already looking at
+ * her. Gating it on Home placement meant a character with five approved clips
+ * showed only the one that happened to be merchandised, and none if none was.
+ * Measured against the real query, before this change: 0 of 5 with nothing
+ * placed, then 1, 2 and 3 as each clip was individually merchandised, and back
+ * to 2 when one category was un-published from Home. Production matched that
+ * shape — 30 reachable clips across 29 characters, almost exactly the single
+ * clip per character her Play with me card requires.
+ *
+ * ── APPROVED IS STILL NOT ENOUGH ─────────────────────────────────────────────
+ *
+ * `published_at is not null` is required, and that is the whole point of the
+ * column. Approval remains a MODERATION verdict that exposes nothing, so the
+ * standing rule holds unchanged: an approved asset nobody released is a 404
+ * here, and no amount of id guessing reaches it.
+ *
+ * ── WHAT IT CANNOT ADMIT ─────────────────────────────────────────────────────
+ *
+ * `PUBLIC_CONTENT_KINDS` is `generated` alone, so `chat` — the private
+ * per-conversation pool — fails this condition exactly as it fails every other
+ * public rule, and a `reference` portrait cannot become a post. Unapproved and
+ * unpublished rows fail on their own columns, and an INACTIVE character's
+ * content fails the exists-check, so retiring her closes her page immediately.
+ *
+ * ── IT IS A SEPARATE FUNCTION, NOT A FIFTH ARM ───────────────────────────────
+ *
+ * Adding an arm to `publiclyReachableCondition` would have changed Play with
+ * me, Swipe, Favourites, the search grid and Discovery in one edit — every one
+ * of them would have begun counting clips no operator had placed. Those are
+ * placements and must keep asking the placement question. Exactly two callers
+ * use this instead: the Posts query, and the media route that has to serve what
+ * Posts lists.
+ */
+export function characterPostsCondition() {
+  return and(
+    eq(characterVisualAssets.status, PUBLISHABLE_STATUS),
+    // RELEASED, not merely approved. This is the line that keeps moderation and
+    // publication apart.
+    sql`${characterVisualAssets.publishedAt} is not null`,
+    // Content only: 'chat' and 'reference' are both absent from this list.
+    inArray(characterVisualAssets.kind, [...PUBLIC_CONTENT_KINDS]),
+    sql`exists (
+      select 1 from ${characters}
+      where ${characters.id} = ${characterVisualAssets.characterId}
+        and ${characters.status} = 'active'
+    )`,
+  );
+}
+
 export async function getPublicAsset(
   db: Db,
   assetId: string,
@@ -171,7 +231,25 @@ export async function getPublicAsset(
   const [row] = await db
     .select()
     .from(characterVisualAssets)
-    .where(and(eq(characterVisualAssets.id, assetId), publiclyReachableCondition()))
+    /**
+     * EITHER route to publication, because this route has to be able to serve
+     * whatever a public surface legitimately lists.
+     *
+     * Posts listing a clip while this route refused its bytes would render
+     * every one of those tiles dead — a worse defect than the one being fixed —
+     * so the listing rule and the serving rule move together.
+     *
+     * NEITHER IS RELAXED. `publiclyReachableCondition` is byte-for-byte
+     * unchanged, and `characterPostsCondition` demands a release time on top of
+     * approval. An approved-but-unreleased asset satisfies neither, so the
+     * standing guarantee — approval alone exposes nothing — survives intact.
+     */
+    .where(
+      and(
+        eq(characterVisualAssets.id, assetId),
+        or(publiclyReachableCondition(), characterPostsCondition()),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

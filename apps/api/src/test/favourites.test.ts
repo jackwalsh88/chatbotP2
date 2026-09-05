@@ -646,8 +646,22 @@ describe('existing surfaces are unchanged', () => {
     expect(JSON.stringify(all)).not.toContain('favourite');
   });
 
-  it('the character profile still serves her own clips', async () => {
+  it('the character profile still serves her own RELEASED clips', async () => {
+    /**
+     * MERCHANDISING IS NOT PUBLICATION, and this test had to learn it.
+     *
+     * It used to rely on `makeEligible` alone — an approved clip made reachable
+     * from Home by a discovery keyword — and expect it on her Posts tab. That
+     * was the defect: Posts answered a HOME placement question. Posts now asks
+     * whether the clip was released to HER page, so the test performs that
+     * release explicitly.
+     */
     const asset = await makeEligible(LUNA.id);
+    await on.app.inject({
+      method: 'POST',
+      url: `/admin/content/assets/${asset.id}/publish`,
+      cookies: adminCookies,
+    });
     const res = await on.app.inject({ method: 'GET', url: `/api/characters/${LUNA.id}/clips` });
     expect(res.statusCode).toBe(200);
     expect(res.json().clips.map((c: { id: string }) => c.id)).toContain(asset.id);

@@ -45,6 +45,9 @@ function asset(over: Partial<CharacterContentAsset> = {}): CharacterContentAsset
     mediaType: 'video',
     contentRating: 'sfw',
     requirementKey: null,
+    // Not released by default: approving no longer publishes, so the fixture
+    // must not quietly assume it does.
+    publishedAt: null,
     isPrimary: false,
     position: null,
     previewUrl: '/admin/content/assets/a1/file',
@@ -273,6 +276,10 @@ describe('the controls an item offers', () => {
       canAddToCategory: false,
       canAddToHero: false,
       inHero: false,
+      // Releasing to Posts is not on offer either: a rejected clip has not
+      // passed moderation, and the server refuses to publish one.
+      canPublish: false,
+      canUnpublish: false,
     });
   });
 

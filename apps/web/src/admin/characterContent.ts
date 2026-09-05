@@ -127,6 +127,14 @@ export interface AssetActions {
   canAddToHero: boolean;
   /** Already in the Hero, so adding again would do nothing. */
   inHero: boolean;
+  /**
+   * Approved CONTENT that is not yet on her Posts tab — the release is
+   * available. References and chat media never offer it: one is identity, the
+   * other is private, and neither can be a post.
+   */
+  canPublish: boolean;
+  /** Live on her Posts tab, so it can be taken down without un-approving it. */
+  canUnpublish: boolean;
 }
 
 /**
@@ -141,13 +149,29 @@ export function assetActions(asset: CharacterContentAsset): AssetActions {
   const pending = PENDING_STATUSES.has(asset.status);
   const approved = asset.status === 'approved';
   const inHero = asset.placement.heroPosition !== null;
+  // Content only. The server refuses to publish a reference or chat asset, so
+  // offering the control for one would promise something it would reject.
+  const isContent = asset.kind === 'generated';
+  const live = asset.publishedAt !== null;
   return {
     canApprove: pending,
     canReject: pending,
     canAddToCategory: approved,
     canAddToHero: approved && !inHero,
     inHero,
+    canPublish: approved && isContent && !live,
+    canUnpublish: approved && isContent && live,
   };
+}
+
+/**
+ * Whether this clip is live on the character's Posts tab.
+ *
+ * Named rather than inlined because "approved" and "live" are now different
+ * questions and the screen has to be able to say which it means.
+ */
+export function isPublished(asset: CharacterContentAsset): boolean {
+  return asset.publishedAt !== null;
 }
 
 /** The categories this item is NOT in yet — the only ones worth offering. */

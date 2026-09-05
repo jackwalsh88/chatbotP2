@@ -1206,6 +1206,16 @@ export const contentReviewApi = {
     request<ReviewAssetView>(`/admin/content/assets/${assetId}/approve`, { method: 'POST' }),
   reject: (assetId: string) =>
     request<ReviewAssetView>(`/admin/content/assets/${assetId}/reject`, { method: 'POST' }),
+  /**
+   * Release to / withdraw from the character's Posts tab.
+   *
+   * Deliberately NOT part of approve: approving is a moderation verdict that
+   * exposes nothing, and this is the editorial decision to make a clip public.
+   */
+  publish: (assetId: string) =>
+    request<ReviewAssetView>(`/admin/content/assets/${assetId}/publish`, { method: 'POST' }),
+  unpublish: (assetId: string) =>
+    request<ReviewAssetView>(`/admin/content/assets/${assetId}/unpublish`, { method: 'POST' }),
 };
 
 /* ------------------------------------------------------------------ *
@@ -1344,6 +1354,12 @@ export interface CharacterContentAsset {
   };
   createdAt: string;
   approvedAt: string | null;
+  /**
+   * When this clip was RELEASED to the character's public Posts tab, or null.
+   * Separate from `approvedAt`: approving is moderation and shows nothing,
+   * releasing is what puts it on her page.
+   */
+  publishedAt: string | null;
 }
 
 export const adminCharactersApi = {

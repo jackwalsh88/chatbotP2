@@ -134,6 +134,24 @@ export interface LibraryUploadInput {
    * keeps that behaviour byte-for-byte unchanged.
    */
   approve?: boolean;
+  /**
+   * Whether this upload is RELEASED to the character's public Posts tab.
+   *
+   * FALSE is the default and every pre-existing caller: the Content Library and
+   * the inbox both land content that an operator has not yet chosen to put on
+   * anyone's page, so nothing this path creates becomes public by itself.
+   *
+   * TRUE is the Character page's Regular and Explicit shelves. That upload
+   * already approves on arrival because "uploading to a character IS the
+   * editorial decision" — this simply RECORDS the other half of that decision
+   * instead of leaving it implied. It is the same operator action at the same
+   * moment, not a second publishing mechanism.
+   *
+   * Publishing without approving is refused below rather than silently
+   * corrected: content that has not passed moderation must never carry a
+   * release time, or a later approval would put it live retroactively.
+   */
+  publish?: boolean;
 }
 
 export interface LibraryUploadStorage {
@@ -309,6 +327,21 @@ export async function uploadLibraryAsset(
       updatedAt: new Date(),
     })
     .where(eq(characterVisualAssets.id, created.id));
+
+  /**
+   * RELEASE, recorded at the moment the operator made the decision.
+   *
+   * Guarded on `approve` as well as `publish`: an unapproved row must never
+   * carry a release time, because approving it later would then put it live
+   * without anyone choosing to. The two flags travel together from the shelf,
+   * so this only ever refuses a caller that asked for something incoherent.
+   */
+  if (approve && input.publish) {
+    await db
+      .update(characterVisualAssets)
+      .set({ publishedAt: new Date(), updatedAt: new Date() })
+      .where(eq(characterVisualAssets.id, created.id));
+  }
 
   // Reuse the existing approval transition rather than inventing one: it records
   // approvedBy/approvedAt and leaves is_canonical false for a generated asset.

@@ -16,6 +16,8 @@ import {
   SECTION_RATING,
   SECTION_FILE_ACCEPT,
   type ContentSection,
+  assetActions,
+  isPublished,
 } from '../../admin/characterContent';
 import {
   API_URL,
@@ -26,6 +28,7 @@ import {
   type AdminCharacterDetail,
   type VisualIdentityView,
   type CharacterContentAsset,
+  contentReviewApi,
 } from '../../lib/api';
 
 /**
@@ -136,6 +139,44 @@ export default function AdminCharacterDetailPage() {
   const [deleteConfirmFor, setDeleteConfirmFor] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<{ assetId: string; message: string } | null>(null);
+
+  /**
+   * Releasing a clip to her Posts tab, and taking it back.
+   *
+   * THIS SCREEN IS THE RIGHT OWNER. Approve/Reject and Home placement were
+   * deliberately removed from this page — those belong to Review and to
+   * Merchandise. Publishing to POSTS is neither: it is a decision about HER
+   * page, which is exactly what this shelf already owns. Uploading to Regular
+   * or Explicit here already publishes; this is the same axis, made reversible
+   * and visible.
+   *
+   * Per-asset id rather than a boolean, for the same reason Delete is: the
+   * shelves render many tiles and a shared flag would spin all of them.
+   */
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+
+  async function handleTogglePublished(asset: CharacterContentAsset) {
+    setPublishingId(asset.assetId);
+    setContentNotice(null);
+    try {
+      const live = isPublished(asset);
+      await (live
+        ? contentReviewApi.unpublish(asset.assetId)
+        : contentReviewApi.publish(asset.assetId));
+      setContentNotice(
+        live
+          ? 'Taken off her Posts tab. It is still approved — nothing was rejected or deleted.'
+          : 'Published to her Posts tab.',
+      );
+      await reloadContent();
+    } catch (err) {
+      setContentNotice(
+        err instanceof ApiRequestError ? err.message : 'Could not change publication.',
+      );
+    } finally {
+      setPublishingId(null);
+    }
+  }
 
   /**
    * Keyword editing, per clip.
@@ -869,6 +910,16 @@ export default function AdminCharacterDetailPage() {
                       <p className="truncate text-[11px] text-zinc-500">
                         {placementLabel(asset)}
                       </p>
+                      {/* Approved and live are different questions now. */}
+                      {asset.status === 'approved' && asset.kind === 'generated' && (
+                        <p
+                          className={`truncate text-[11px] ${
+                            isPublished(asset) ? 'text-emerald-400' : 'text-amber-400'
+                          }`}
+                        >
+                          {isPublished(asset) ? 'On her Posts tab' : 'Not on her Posts tab'}
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-1 pt-1">
                         <button
                           type="button"
@@ -879,6 +930,27 @@ export default function AdminCharacterDetailPage() {
                         >
                           {keywordsFor === asset.assetId ? 'Close keywords' : 'Keywords'}
                         </button>
+                        {/* LIVE ON HER PAGE, or not. Approving no longer
+                            publishes, so the shelf has to say which. */}
+                        {(assetActions(asset).canPublish || assetActions(asset).canUnpublish) && (
+                          <button
+                            type="button"
+                            onClick={() => void handleTogglePublished(asset)}
+                            disabled={busy || publishingId !== null}
+                            aria-pressed={isPublished(asset)}
+                            className={`rounded border px-2 py-0.5 text-[11px] disabled:opacity-50 ${
+                              isPublished(asset)
+                                ? 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10'
+                                : 'border-zinc-700 text-zinc-200 hover:border-zinc-600'
+                            }`}
+                          >
+                            {publishingId === asset.assetId
+                              ? '…'
+                              : isPublished(asset)
+                                ? 'Unpublish'
+                                : 'Publish to Posts'}
+                          </button>
+                        )}
                         {assetDeletable(asset).deletable && (
                           <button
                             type="button"

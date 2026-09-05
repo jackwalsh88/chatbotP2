@@ -566,6 +566,9 @@ describe('resolveMediaFile', () => {
     requirementKey: null,
     approvedBy: null,
     approvedAt: null,
+    // Release time. Irrelevant to file RESOLUTION, which is what these cases
+    // exercise — the publication gate is applied before a row ever reaches here.
+    publishedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

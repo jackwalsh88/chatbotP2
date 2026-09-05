@@ -139,6 +139,23 @@ async function makeApprovedVideoAsset(characterId = LUNA.id) {
   return { ...asset, storageKey: path };
 }
 
+/**
+ * RELEASES an approved clip to the character's Posts tab, through the real
+ * admin endpoint rather than by writing the column directly.
+ *
+ * Separate from `publishViaKeyword` on purpose, and the distinction is the
+ * point of this whole model: a keyword makes a clip reachable from HOME and
+ * Discovery, this makes it appear on HER PAGE. Approval alone does neither.
+ */
+async function releaseToPosts(assetId: string) {
+  const res = await on.app.inject({
+    method: 'POST',
+    url: `/admin/content/assets/${assetId}/publish`,
+    cookies: adminCookies,
+  });
+  expect(res.statusCode).toBe(200);
+}
+
 /** Makes an approved video PUBLICLY REACHABLE via a discovery keyword. */
 async function publishViaKeyword(assetId: string, keyword = 'railtest') {
   await api.createDiscovery({ name: `Rail ${keyword} ${++seq}`, keywords: [keyword] });
@@ -2786,8 +2803,7 @@ describe('a character’s public content collection', () => {
     for (let i = 0; i < 12; i += 1) {
       const asset = await makeApprovedVideoAsset(LUNA.id);
       made.push(asset.id);
-      if (i === 0) await publishViaKeyword(asset.id, 'collection');
-      else await api.setAssetKeywords(asset.id, ['collection']);
+      await releaseToPosts(asset.id);
     }
 
     const res = await clipsFor(LUNA.id);
@@ -2800,9 +2816,9 @@ describe('a character’s public content collection', () => {
 
   it('returns only THIS character’s clips', async () => {
     const mine = await makeApprovedVideoAsset(LUNA.id);
-    await publishViaKeyword(mine.id, 'ownership');
+    await releaseToPosts(mine.id);
     const hers = await makeApprovedVideoAsset(EMBER.id);
-    await api.setAssetKeywords(hers.id, ['ownership']);
+    await releaseToPosts(hers.id);
 
     const lunaClips = (await clipsFor(LUNA.id)).json().clips as Array<{
       id: string;
@@ -2821,7 +2837,7 @@ describe('a character’s public content collection', () => {
 
   it('excludes everything once the character is INACTIVE', async () => {
     const asset = await makeApprovedVideoAsset(EMBER.id);
-    await publishViaKeyword(asset.id, 'goesoffline');
+    await releaseToPosts(asset.id);
     expect(
       ((await clipsFor(EMBER.id)).json().clips as Array<{ id: string }>).map((c) => c.id),
     ).toContain(asset.id);
@@ -2839,6 +2855,196 @@ describe('a character’s public content collection', () => {
     expect((await api.media(orphan.id)).statusCode).toBe(404);
   });
 
+  /* ---------------------------------------------------------------- *
+   * APPROVED IS NOT PUBLISHED.
+   *
+   * The bug these close: Posts used to ask `publiclyReachableCondition`, which
+   * answers "has an operator placed this clip on HOME?" — a different decision
+   * from "does this belong on her page". A character with several approved
+   * clips therefore showed only the one that happened to be merchandised.
+   *
+   * The fix does NOT make approval sufficient. Release is its own explicit,
+   * reversible act, and these pin both halves.
+   * ---------------------------------------------------------------- */
+
+  it('shows EVERY released clip she has — the reported bug', async () => {
+    const made: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const asset = await makeApprovedVideoAsset(LUNA.id);
+      made.push(asset.id);
+      await releaseToPosts(asset.id);
+    }
+    // Not one of them is merchandised onto Home, and that is the point.
+    const clips = (await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>;
+    expect(clips.map((c) => c.id).sort()).toEqual([...made].sort());
+  });
+
+  it('hides an APPROVED but UNRELEASED clip, and refuses its bytes by id', async () => {
+    const held = await makeApprovedVideoAsset(LUNA.id);
+    const clips = (await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>;
+    expect(clips.map((c) => c.id)).not.toContain(held.id);
+    // The standing guarantee: approval alone must not expose the Library.
+    expect((await api.media(held.id)).statusCode).toBe(404);
+  });
+
+  it('serves the bytes of every clip it lists — no dead tiles', async () => {
+    const a = await makeApprovedVideoAsset(LUNA.id);
+    const b = await makeApprovedVideoAsset(LUNA.id);
+    await releaseToPosts(a.id);
+    await releaseToPosts(b.id);
+    const clips = (await clipsFor(LUNA.id)).json().clips as Array<{ id: string; url: string }>;
+    expect(clips).toHaveLength(2);
+    for (const clip of clips) {
+      expect((await on.app.inject({ method: 'GET', url: clip.url })).statusCode).toBe(200);
+    }
+  });
+
+  it('UNPUBLISHING removes it from Posts and closes its bytes, without un-approving it', async () => {
+    const asset = await makeApprovedVideoAsset(LUNA.id);
+    await releaseToPosts(asset.id);
+    expect(((await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>).map((c) => c.id))
+      .toContain(asset.id);
+
+    const res = await on.app.inject({
+      method: 'POST',
+      url: `/admin/content/assets/${asset.id}/unpublish`,
+      cookies: adminCookies,
+    });
+    expect(res.statusCode).toBe(200);
+
+    expect(((await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>).map((c) => c.id))
+      .not.toContain(asset.id);
+    expect((await api.media(asset.id)).statusCode).toBe(404);
+    // Still approved — taking it down is not a rejection.
+    const [row] = await on.db
+      .select()
+      .from(characterVisualAssets)
+      .where(eq(characterVisualAssets.id, asset.id));
+    expect(row!.status).toBe('approved');
+  });
+
+  it('refuses to publish an UNAPPROVED clip or a REFERENCE portrait', async () => {
+    const pending = await makeUnapprovedAsset(LUNA.id);
+    const held = await on.app.inject({
+      method: 'POST',
+      url: `/admin/content/assets/${pending.id}/publish`,
+      cookies: adminCookies,
+    });
+    expect(held.statusCode).toBe(409);
+
+    const [reference] = await on.db
+      .select()
+      .from(characterVisualAssets)
+      .where(
+        and(
+          eq(characterVisualAssets.characterId, LUNA.id),
+          eq(characterVisualAssets.kind, 'reference'),
+        ),
+      );
+    const portrait = await on.app.inject({
+      method: 'POST',
+      url: `/admin/content/assets/${reference!.id}/publish`,
+      cookies: adminCookies,
+    });
+    expect(portrait.statusCode).toBe(409);
+  });
+
+  it('publish and unpublish are ADMIN ONLY', async () => {
+    const asset = await makeApprovedVideoAsset(LUNA.id);
+    for (const verb of ['publish', 'unpublish']) {
+      expect(
+        (
+          await on.app.inject({
+            method: 'POST',
+            url: `/admin/content/assets/${asset.id}/${verb}`,
+            cookies: userCookies,
+          })
+        ).statusCode,
+      ).toBe(403);
+    }
+  });
+
+  /**
+   * PLACEMENT AND PUBLICATION ARE DIFFERENT AXES, and releasing to Posts must
+   * not quietly put her on Home.
+   */
+  /**
+   * THE FORWARD DIRECTION, and the one the original bug lived in.
+   *
+   * Merchandising a clip onto Home — a Hero slot, a published category, a
+   * discovery keyword — makes it public THERE. It says nothing about her page,
+   * and must not put it on Posts. Posts used to be driven entirely by these
+   * placements, which is why a character with several approved clips showed
+   * only the one that happened to be merchandised.
+   */
+  it('HOME merchandising does not put a clip on Posts', async () => {
+    const viaKeyword = await makeApprovedVideoAsset(LUNA.id);
+    await publishViaKeyword(viaKeyword.id, 'homeonly');
+
+    const viaHero = await makeApprovedVideoAsset(LUNA.id);
+    await api.addHero([viaHero.id]);
+
+    const viaCategory = await makeApprovedVideoAsset(LUNA.id);
+    const category = await makeCategory('Posts Independence');
+    await assign(category.id, [viaCategory.id]);
+    await api.publish(category.id, true);
+
+    // All three are publicly reachable from Home...
+    for (const asset of [viaKeyword, viaHero, viaCategory]) {
+      expect((await api.media(asset.id)).statusCode).toBe(200);
+    }
+    // ...and NONE of them is on her Posts tab, because none was released to it.
+    const posts = ((await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>).map(
+      (c) => c.id,
+    );
+    for (const asset of [viaKeyword, viaHero, viaCategory]) {
+      expect(posts).not.toContain(asset.id);
+    }
+
+    // Releasing ONE of them adds exactly that one, and changes nothing else.
+    await releaseToPosts(viaHero.id);
+    const after = ((await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>).map(
+      (c) => c.id,
+    );
+    expect(after).toEqual([viaHero.id]);
+  });
+
+  /**
+   * A REMOVED CHARACTER TAKES HER PAGE WITH HER, published clips included.
+   * Both gates are checked: the listing route, and the bytes by id.
+   */
+  it('an INACTIVE character exposes no published content, by listing or by id', async () => {
+    const asset = await makeApprovedVideoAsset(EMBER.id);
+    await releaseToPosts(asset.id);
+    expect(((await clipsFor(EMBER.id)).json().clips as Array<{ id: string }>).map((c) => c.id))
+      .toContain(asset.id);
+    expect((await api.media(asset.id)).statusCode).toBe(200);
+
+    await on.db.update(characters).set({ status: 'inactive' }).where(eq(characters.id, EMBER.id));
+
+    // The listing route reads as not-found, like its sibling public routes.
+    expect((await clipsFor(EMBER.id)).statusCode).toBe(404);
+    // And the bytes close immediately, even though published_at is still set.
+    expect((await api.media(asset.id)).statusCode).toBe(404);
+
+    // Reactivating her restores it — publication survived, it was only gated.
+    await on.db.update(characters).set({ status: 'active' }).where(eq(characters.id, EMBER.id));
+    expect(((await clipsFor(EMBER.id)).json().clips as Array<{ id: string }>).map((c) => c.id))
+      .toContain(asset.id);
+  });
+
+  it('releasing to Posts does NOT put the clip on Play with me or the search grid', async () => {
+    const asset = await makeApprovedVideoAsset(LUNA.id);
+    await releaseToPosts(asset.id);
+
+    const home = (await api.home()).json();
+    expect(home.playWithMe.map((c: { id: string }) => c.id)).not.toContain(LUNA.id);
+    expect(home.browseClips.map((c: { id: string }) => c.id)).not.toContain(asset.id);
+
+    const swipe = (await on.app.inject({ method: 'GET', url: '/api/play-with-me' })).json();
+    expect(swipe.characters.map((c: { id: string }) => c.id)).not.toContain(LUNA.id);
+  });
+
   it('NEVER returns a reference/primary asset as a content clip', async () => {
     const [reference] = await on.db
       .select()
@@ -2852,7 +3058,7 @@ describe('a character’s public content collection', () => {
     expect(reference).toBeDefined();
 
     const content = await makeApprovedVideoAsset(LUNA.id);
-    await publishViaKeyword(content.id, 'noreference');
+    await releaseToPosts(content.id);
 
     const clips = (await clipsFor(LUNA.id)).json().clips as Array<{ id: string }>;
     expect(clips.map((c) => c.id)).toContain(content.id);
@@ -2861,7 +3067,7 @@ describe('a character’s public content collection', () => {
 
   it('returns a browser-usable public URL that actually serves bytes', async () => {
     const asset = await makeApprovedVideoAsset(LUNA.id);
-    await publishViaKeyword(asset.id, 'servable');
+    await releaseToPosts(asset.id);
     const [clip] = (await clipsFor(LUNA.id)).json().clips as Array<{
       url: string;
       mediaType: string;
@@ -2874,7 +3080,7 @@ describe('a character’s public content collection', () => {
 
   it('NEVER exposes a storage key or filesystem path', async () => {
     const asset = await makeApprovedVideoAsset(LUNA.id);
-    await publishViaKeyword(asset.id, 'nopaths');
+    await releaseToPosts(asset.id);
     const body = (await clipsFor(LUNA.id)).payload;
     expect(body).not.toContain('storageKey');
     expect(body).not.toContain('storagePath');
@@ -2886,7 +3092,7 @@ describe('a character’s public content collection', () => {
     // An approved uploaded image is legitimate CONTENT. It is not her
     // reference image, and the collection is allowed to include it.
     const image = await makeApprovedAsset(LUNA.id);
-    await publishViaKeyword(image.id, 'contentimage');
+    await releaseToPosts(image.id);
     const clips = (await clipsFor(LUNA.id)).json().clips as Array<{
       id: string;
       mediaType: string;
