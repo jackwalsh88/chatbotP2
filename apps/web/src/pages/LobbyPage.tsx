@@ -51,7 +51,10 @@ import { DiscoverIcon, FilterIcon, SearchIcon, SparkleIcon } from '../components
 function LobbySkeleton() {
   return (
     <div className="flex flex-col gap-6 pb-8 pt-3" data-testid="lobby-skeleton">
-      <div className="aspect-[16/11] w-full animate-pulse bg-zinc-900" />
+      {/* SQUARE, matching HeroCarousel. It was 16:11 while the hero was, and
+          when the hero became square this had to follow or the page would jump
+          258px -> 375px the moment Home resolved. */}
+      <div className="aspect-square w-full animate-pulse bg-zinc-900" />
       <div className="flex gap-3 overflow-hidden px-4">
         {Array.from({ length: 3 }, (_, i) => (
           <div key={i} className="aspect-[3/4] w-40 shrink-0 animate-pulse rounded-2xl bg-zinc-900" />
