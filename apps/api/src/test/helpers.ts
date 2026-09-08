@@ -30,6 +30,7 @@ export const testEnv: Env = {
   sessionTtlDays: 30,
   isProduction: false,
   llm: null, // tests always inject providers explicitly — no real endpoint
+  personaVision: null, // tests always inject a PersonaGenerator explicitly
   memory: { maxInjected: 10, maxInjectedChars: 2_000, maxStored: 100 },
   // Matches production's default: OFF. Tests that exercise Character Media
   // Messages opt in explicitly via createTestContext({ chatMediaEnabled: true }),

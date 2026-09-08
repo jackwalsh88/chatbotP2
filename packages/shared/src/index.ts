@@ -188,6 +188,54 @@ export interface CharacterVisualIdentityResponse {
   canonicalAssets: PublicVisualAsset[];
 }
 
+/**
+ * Phase 2 — avatar-derived character persona.
+ *
+ * WHO SHE IS / HER VOICE has always been correct but thin: shortBio,
+ * personality and a handful of interests. This is a richer, structured
+ * identity layer generated once from a character's avatar, persisted, and
+ * compiled deterministically into the same two prompt sections — never a
+ * third. It is IDENTITY data, exactly like VisualDna and characters.shortBio:
+ * it says who she is, never how she talks. conversationStyle and the stored
+ * systemPrompt remain excluded from the model for the same reason they always
+ * were — see prompt-builder.ts.
+ *
+ * Every field is optional and every field is fictional-character DATA, not
+ * free-form prose: the compiler (character-persona-compiler.ts) is what turns
+ * this into sentences, so nothing generated here can inject its own prompt
+ * structure. Internal / admin-facing only, like AdminCharacter's systemPrompt
+ * — there is no public wire mapper for this type.
+ */
+export interface CharacterPersona {
+  age?: number;
+  ageRange?: string;
+  lifeStage?: string;
+
+  occupation?: string;
+  education?: string;
+
+  visualStyle?: string;
+  demeanor?: string[];
+
+  interests?: string[];
+  hobbies?: string[];
+
+  dailyContext?: string[];
+  recurringConcerns?: string[];
+
+  socialStyle?: string;
+  humorStyle?: string;
+  flirtingStyle?: string;
+
+  speechRegister?: string;
+
+  backgroundNotes?: string[];
+  relationshipToWorkOrSchool?: string;
+
+  /** Short note on what the image visibly supports, for admin review only. Never rendered into a prompt. */
+  sourceSummary?: string;
+}
+
 /* ------------------------------------------------------------------ *
  * Home banners (US-102.3)
  * ------------------------------------------------------------------ */

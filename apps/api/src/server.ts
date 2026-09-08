@@ -5,6 +5,7 @@ import { selectReplyProvider } from './services/llm-reply-provider.js';
 import { selectMemoryExtractor } from './services/memory-extractor.js';
 import { selectMediaProviders } from './services/media-providers.js';
 import { selectProfileAuthor } from './services/character-profile-service.js';
+import { selectPersonaGenerator } from './services/character-persona-generator.js';
 import { selectPromptGenerationDeps } from './prompt-generation/select-providers.js';
 import { recoverInterruptedPromptJobs } from './prompt-generation/runner.js';
 
@@ -16,6 +17,7 @@ const app = await buildApp(env, db, {
   memoryExtractor: selectMemoryExtractor(env),
   mediaProviders: selectMediaProviders(env),
   profileAuthor: selectProfileAuthor(env),
+  personaGenerator: selectPersonaGenerator(env),
 });
 
 app.log.info(

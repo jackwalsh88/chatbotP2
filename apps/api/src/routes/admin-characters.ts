@@ -16,6 +16,14 @@ import {
   unconfiguredProfileAuthor,
   type ProfileAuthor,
 } from '../services/character-profile-service.js';
+import { PersonaGeneratorError, unconfiguredPersonaGenerator, type PersonaGenerator } from '../services/character-persona-generator.js';
+import {
+  CharacterPersonaRegenerationError,
+  CharacterPersonaValidationError,
+  getCharacterPersona,
+  regenerateCharacterPersona,
+  saveCharacterPersona,
+} from '../services/character-persona-service.js';
 import {
   VisualDnaValidationError,
   VisualIdentityNotFoundError,
@@ -116,12 +124,19 @@ function referenceView(row: CharacterVisualAssetRow) {
 
 export default async function adminCharacterRoutes(
   app: FastifyInstance,
-  opts: { db: Db; uploadStorage: LibraryUploadStorage; profileAuthor?: ProfileAuthor },
+  opts: {
+    db: Db;
+    uploadStorage: LibraryUploadStorage;
+    profileAuthor?: ProfileAuthor;
+    personaGenerator?: PersonaGenerator;
+  },
 ) {
   const adminOnly = { preHandler: [app.requireAuth, app.requireAdmin] };
   // Default to the unconfigured author so an un-wired app fails honestly
   // ("Autofill unavailable") instead of silently having no route at all.
   const profileAuthor = opts.profileAuthor ?? unconfiguredProfileAuthor;
+  // Same discipline for persona generation (Phase 2).
+  const personaGenerator = opts.personaGenerator ?? unconfiguredPersonaGenerator;
 
   // Scoped to this plugin, mirroring admin-content.ts: multipart parsing is
   // registered only where uploads actually land.
@@ -426,6 +441,103 @@ export default async function adminCharacterRoutes(
           // Kind only — never a provider response body, endpoint or key.
           const status = error.kind === 'not_configured' ? 503 : 502;
           return reply.code(status).send({ error: `ai_${error.kind}`, message: error.message });
+        }
+        throw error;
+      }
+    },
+  );
+
+  /* ---------------------------------------------------------------- *
+   * Avatar-derived persona (Phase 2)
+   * ---------------------------------------------------------------- */
+
+  /** The character's current persona, plus which fields an admin has edited by hand. */
+  app.get<{ Params: { characterId: string } }>(
+    '/admin/characters/:characterId/persona',
+    adminOnly,
+    async (request, reply) => {
+      const { characterId } = request.params;
+      if (!UUID_RE.test(characterId)) return notFound(reply);
+      if (!(await getCharacterForAdmin(opts.db, characterId))) return notFound(reply);
+
+      const row = await getCharacterPersona(opts.db, characterId);
+      return {
+        persona: row?.persona ?? {},
+        editedFields: row?.editedFields ?? [],
+        sourceAssetId: row?.sourceAssetId ?? null,
+        generatedAt: row?.generatedAt?.toISOString() ?? null,
+      };
+    },
+  );
+
+  /**
+   * Admin edit. A PARTIAL persona: only the keys sent are validated and
+   * merged in, and each becomes protected from being overwritten by a later
+   * regeneration (see saveCharacterPersona).
+   */
+  app.patch<{ Params: { characterId: string }; Body: Record<string, unknown> }>(
+    '/admin/characters/:characterId/persona',
+    adminOnly,
+    async (request, reply) => {
+      const { characterId } = request.params;
+      if (!UUID_RE.test(characterId)) return notFound(reply);
+      if (!(await getCharacterForAdmin(opts.db, characterId))) return notFound(reply);
+
+      try {
+        const row = await saveCharacterPersona(opts.db, characterId, request.body ?? {});
+        return {
+          persona: row.persona,
+          editedFields: row.editedFields,
+          sourceAssetId: row.sourceAssetId,
+          generatedAt: row.generatedAt?.toISOString() ?? null,
+        };
+      } catch (error) {
+        if (error instanceof CharacterPersonaValidationError) {
+          return reply.code(400).send({ error: 'invalid_persona', message: error.message });
+        }
+        throw error;
+      }
+    },
+  );
+
+  /**
+   * Re-analyses the character's current primary reference image and merges
+   * the result into her persona. WRITES IMMEDIATELY (unlike Autofill's
+   * draft-only flow) because the protection here is structural, not
+   * procedural: regenerateCharacterPersona never overwrites a field already
+   * in editedFields, and never touches the row at all on failure.
+   */
+  app.post<{ Params: { characterId: string } }>(
+    '/admin/characters/:characterId/persona/regenerate',
+    adminOnly,
+    async (request, reply) => {
+      const { characterId } = request.params;
+      if (!UUID_RE.test(characterId)) return notFound(reply);
+      const character = await getCharacterForAdmin(opts.db, characterId);
+      if (!character) return notFound(reply);
+
+      try {
+        const row = await regenerateCharacterPersona(
+          opts.db,
+          character.displayName,
+          characterId,
+          personaGenerator,
+        );
+        return {
+          persona: row.persona,
+          editedFields: row.editedFields,
+          sourceAssetId: row.sourceAssetId,
+          generatedAt: row.generatedAt?.toISOString() ?? null,
+        };
+      } catch (error) {
+        // Kind only — never a provider response body, endpoint or key.
+        if (error instanceof PersonaGeneratorError) {
+          const status = error.kind === 'not_configured' ? 503 : 502;
+          return reply.code(status).send({ error: `persona_${error.kind}`, message: error.message });
+        }
+        if (error instanceof CharacterPersonaRegenerationError) {
+          const status = error.kind === 'no_source_image' ? 409 : 502;
+          return reply.code(status).send({ error: `persona_${error.kind}`, message: error.message });
         }
         throw error;
       }

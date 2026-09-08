@@ -74,9 +74,26 @@ const MINOR_TERMS = [
   'prepubescent',
   'schoolgirl',
   'schoolboy',
+  'high school',
+  'high schooler',
+  'middle school',
   'loli',
   'shota',
 ];
+
+/**
+ * Does `raw` contain a term that unambiguously denotes a minor? A lighter
+ * check than isAdultAgeBand below: it rejects the negative case only, with no
+ * requirement that the text also carry a positive adult signal. Used for
+ * fields that are free descriptive text rather than an age band — e.g.
+ * CharacterPersona's `lifeStage` ("college student", "renting with two
+ * roommates") — where demanding an explicit "adult"/"20s"/numeric marker
+ * would reject the overwhelming majority of legitimate values.
+ */
+export function containsMinorTerm(raw: string): boolean {
+  const value = raw.trim().toLowerCase();
+  return MINOR_TERMS.some((term) => value.includes(term));
+}
 
 /**
  * Adult-required check for `apparentAgeBand`. Conservative: unknown/ambiguous

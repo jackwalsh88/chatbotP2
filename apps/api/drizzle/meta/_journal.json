@@ -176,6 +176,13 @@
       "when": 1788630811324,
       "tag": "0024_daily_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788881665808,
+      "tag": "0025_pale_the_liberteens",
+      "breakpoints": true
     }
   ]
 }

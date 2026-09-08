@@ -17,6 +17,26 @@ export interface LlmEnv {
   contextMaxChars: number;
 }
 
+/**
+ * Vision-capable inference config (Phase 2 avatar-derived persona).
+ *
+ * NO NEW CONFIG IS REQUIRED to use it: every field defaults to the matching
+ * LLM_* value, so if the already-configured chat endpoint happens to be
+ * vision-capable, persona generation just works. PERSONA_VISION_* exists
+ * purely as an override seam for pointing this ONE feature at a different
+ * model/endpoint later without touching chat or Autofill's configuration.
+ * Still provider-neutral by construction — nothing here names a vendor.
+ */
+export interface VisionEnv {
+  provider: 'openai-compatible';
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  timeoutMs: number;
+  maxTokens: number;
+  temperature: number;
+}
+
 export interface MemoryEnv {
   maxInjected: number;
   maxInjectedChars: number;
@@ -141,6 +161,7 @@ export interface Env {
   sessionTtlDays: number;
   isProduction: boolean;
   llm: LlmEnv | null;
+  personaVision: VisionEnv | null;
   memory: MemoryEnv;
   media: MediaEnv;
   chatMedia: ChatMediaEnv;
@@ -198,6 +219,25 @@ export function loadEnv(): Env {
     };
   }
 
+  // Defaults entirely to the LLM_* config resolved above: PERSONA_VISION_*
+  // overrides individual fields only when set. No baseUrl (from either
+  // source) means no vision config at all — selectPersonaGenerator reports
+  // itself unconfigured rather than guessing.
+  const visionBaseUrl = process.env.PERSONA_VISION_BASE_URL || llm?.baseUrl;
+  const visionModel = process.env.PERSONA_VISION_MODEL || llm?.model;
+  let personaVision: VisionEnv | null = null;
+  if (visionBaseUrl && visionModel) {
+    personaVision = {
+      provider: 'openai-compatible',
+      baseUrl: visionBaseUrl,
+      model: visionModel,
+      apiKey: process.env.PERSONA_VISION_API_KEY || llm?.apiKey,
+      timeoutMs: Number(process.env.PERSONA_VISION_TIMEOUT_MS ?? llm?.timeoutMs ?? 45_000),
+      maxTokens: Number(process.env.PERSONA_VISION_MAX_TOKENS ?? 700),
+      temperature: Number(process.env.PERSONA_VISION_TEMPERATURE ?? 0.4),
+    };
+  }
+
   const runpodEndpointId = (process.env.RUNPOD_ENDPOINT_ID ?? '').trim() || null;
 
   return {
@@ -212,6 +252,7 @@ export function loadEnv(): Env {
     sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
     isProduction: process.env.NODE_ENV === 'production',
     llm,
+    personaVision,
     memory: {
       maxInjected: Number(process.env.MEMORY_MAX_INJECTED ?? 10),
       maxInjectedChars: Number(process.env.MEMORY_MAX_INJECTED_CHARS ?? 2_000),
