@@ -466,7 +466,7 @@ export default function AdminCharacterDetailPage() {
       setAvatarPersonaForm(form);
       setAvatarPersonaOriginalForm(form);
       setAvatarPersonaOpen(false);
-      setAvatarPersonaNotice('Persona saved.');
+      setAvatarPersonaNotice('Details saved.');
     } catch (err) {
       setAvatarPersonaError(
         err instanceof ApiRequestError ? err.message : "Couldn't save her persona.",
@@ -495,10 +495,10 @@ export default function AdminCharacterDetailPage() {
       setAvatarPersonaOriginalForm(form);
       setAvatarPersonaNotice(
         updated.editedFields.length > 0
-          ? `Persona regenerated. ${updated.editedFields.length} hand-edited field${
+          ? `Details generated from her photo. ${updated.editedFields.length} field${
               updated.editedFields.length === 1 ? '' : 's'
-            } kept as-is.`
-          : 'Persona regenerated.',
+            } you wrote yourself were kept unchanged.`
+          : 'Details generated from her photo.',
       );
     } catch (err) {
       setAvatarPersonaError(
@@ -733,11 +733,20 @@ export default function AdminCharacterDetailPage() {
         )}
       </section>
 
-      {/* ---------------- Avatar-derived persona (Phase 2) ---------------- */}
+      {/* ---------------- Life details from her photo (Phase 2) ----------------
+       *
+       * DELIBERATELY NOT CALLED "PERSONA". The section above is already named
+       * Persona and already has an Edit button; naming this one "Avatar-derived
+       * persona" with its own Edit button put two near-identical controls a few
+       * hundred pixels apart, and in the first hands-on test the wrong one was
+       * clicked twice in a row. The wording here names the INPUT (her photo)
+       * and the OUTPUT (life details) instead, which is also what an operator
+       * is actually thinking about.
+       */}
       <section className="mb-10">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            Avatar-derived persona
+            Life details from her photo
           </h2>
           <div className="flex items-center gap-4">
             <button
@@ -745,13 +754,13 @@ export default function AdminCharacterDetailPage() {
               disabled={regeneratingPersona || primaryReferences.length === 0}
               title={
                 primaryReferences.length === 0
-                  ? 'Add a primary reference image first'
+                  ? 'Add a primary reference photo first'
                   : undefined
               }
               onClick={() => void handleRegenerateAvatarPersona(character.id)}
               className="text-sm text-rose-400 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {regeneratingPersona ? 'Analysing…' : 'Regenerate from avatar'}
+              {regeneratingPersona ? 'Reading her photo…' : 'Generate from photo'}
             </button>
             <button
               type="button"
@@ -763,26 +772,26 @@ export default function AdminCharacterDetailPage() {
               }}
               className="text-sm text-rose-400 hover:text-rose-300"
             >
-              {avatarPersonaOpen ? 'Cancel' : 'Edit'}
+              {avatarPersonaOpen ? 'Cancel' : 'Edit details'}
             </button>
           </div>
         </div>
 
         <p className="mb-3 text-xs leading-relaxed text-zinc-500">
-          A richer identity generated from her primary reference image — additional facts and a
-          voice clause rendered into WHO SHE IS / HER VOICE alongside her profile above, never
-          replacing it. Fields you edit here are protected: regenerating never overwrites them.
+          Her everyday life — work, routine, interests, how she jokes and flirts — read from her
+          primary reference photo. This is added to the Persona above in chat, never replaces it.
+          Anything you type in here is yours: generating again leaves your edits untouched.
         </p>
 
         {primaryReferences.length === 0 && (
           <p className="mb-3 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-            No primary reference image yet — add one below before regenerating.
+            No primary reference photo yet — add one below before generating.
           </p>
         )}
 
         {avatarPersona?.generatedAt && (
           <p className="mb-3 text-xs text-zinc-500">
-            Last generated {new Date(avatarPersona.generatedAt).toLocaleString()}.
+            Last generated from her photo {new Date(avatarPersona.generatedAt).toLocaleString()}.
           </p>
         )}
 
@@ -833,7 +842,7 @@ export default function AdminCharacterDetailPage() {
                 onClick={() => void handleSaveAvatarPersona(character.id)}
                 className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
               >
-                {avatarPersonaBusy ? 'Saving…' : 'Save persona fields'}
+                {avatarPersonaBusy ? 'Saving…' : 'Save details'}
               </button>
               <button
                 type="button"
@@ -852,10 +861,10 @@ export default function AdminCharacterDetailPage() {
             {PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).length ===
             0 ? (
               <div className="text-zinc-500 sm:col-span-2">
-                No persona generated yet.{' '}
+                Nothing here yet.{' '}
                 {primaryReferences.length > 0
-                  ? 'Use Regenerate from avatar, or Edit to write one by hand.'
-                  : 'Add a primary reference image, then use Regenerate from avatar.'}
+                  ? 'Use Generate from photo, or Edit details to write them by hand.'
+                  : 'Add a primary reference photo below, then use Generate from photo.'}
               </div>
             ) : (
               PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).map(
