@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createDb } from './client.js';
 import { characters, characterVisualAssets, characterVisualIdentities } from './schema.js';
 import { SEED_CHARACTERS, SEED_VISUAL_ASSETS, SEED_VISUAL_IDENTITIES } from './seed-data.js';
@@ -80,8 +82,18 @@ export async function seedVisualIdentities(
   return { identities: SEED_VISUAL_IDENTITIES.length, assets: SEED_VISUAL_ASSETS.length };
 }
 
-// Run directly: node dist/db/seed.js (or via the db:seed npm script)
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Run directly: node dist/db/seed.js (or via the db:seed npm script).
+ *
+ * WHY fileURLToPath AND NOT `file://${process.argv[1]}`. The string form is
+ * correct on Linux and silently WRONG on Windows: `import.meta.url` is
+ * `file:///C:/path/seed.ts` while argv[1] is `C:\path\seed.ts`, so the
+ * comparison never matches, the block never runs, and `npm run db:seed`
+ * exits 0 having seeded nothing at all. Comparing resolved filesystem paths
+ * is platform-neutral, so seeding works the same locally on Windows, on
+ * Linux and on Railway.
+ */
+if (process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1])) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     console.error('FATAL: DATABASE_URL is not set — cannot seed.');
