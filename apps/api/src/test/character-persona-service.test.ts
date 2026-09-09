@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { CharacterPersona } from '@over18/shared';
-import { characterPersonas, characters, users } from '../db/schema.js';
+import { characterPersonas, characterVisualAssets, characters, users } from '../db/schema.js';
 import { SEED_CHARACTERS } from '../db/seed-data.js';
 import { seedCharacters } from '../db/seed.js';
 import { createCharacterDraft } from '../services/character-service.js';
@@ -227,6 +227,54 @@ describe('regenerateCharacterPersona', () => {
     expect(row.persona.occupation).toBe('hand-edited occupation'); // untouched
     expect(row.persona.age).toBe(30); // fresh field DOES update
     expect(row.editedFields).toEqual(['occupation']);
+  });
+
+  it('skips references with no readable file and uses the first one that has bytes', async () => {
+    // The real-world shape this was found in: a seeded placeholder reference
+    // (external locator, no file on disk, explicit position so it sorts
+    // FIRST) alongside a genuinely uploaded one (position null, sorts last).
+    // Taking references[0] blindly made such a character un-regenerable.
+    const character = await createCharacterDraft(ctx.db, { name: `mixed-${Date.now()}` });
+    const identity = await createVisualIdentityVersion(
+      ctx.db,
+      character.id,
+      { apparentAgeBand: 'adult' },
+      { label: 'Test identity' },
+    );
+    const active = await activateVisualIdentityVersion(ctx.db, identity.id);
+
+    // A placeholder canonical reference with no real file, positioned first.
+    await ctx.db.insert(characterVisualAssets).values({
+      characterId: character.id,
+      visualIdentityId: active.id,
+      kind: 'reference',
+      status: 'approved',
+      isCanonical: true,
+      position: 1,
+      storageKey: 'https://example.invalid/placeholder.png',
+      provenance: { source: 'seed-placeholder' },
+    });
+
+    // A real upload lands after it, with position null.
+    const cookie = await adminCookie();
+    const { payload, headers } = pngMultipart();
+    const uploaded = await ctx.app.inject({
+      method: 'POST',
+      url: `/admin/identities/${active.id}/references`,
+      payload,
+      headers: { ...headers, cookie },
+    });
+    expect(uploaded.statusCode).toBe(201);
+
+    const row = await regenerateCharacterPersona(
+      ctx.db,
+      character.displayName,
+      character.id,
+      stubGenerator({ occupation: 'barista' }),
+    );
+    expect(row.persona.occupation).toBe('barista');
+    // Provenance points at the asset that actually supplied the bytes.
+    expect(row.sourceAssetId).toBe(uploaded.json().assetId);
   });
 
   it('a generator failure leaves the persona row completely untouched', async () => {

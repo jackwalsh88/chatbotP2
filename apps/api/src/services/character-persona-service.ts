@@ -238,28 +238,44 @@ export async function regenerateCharacterPersona(
       'This character has no active visual identity, so there is no avatar to analyse.',
     );
   }
-  const [asset] = await listCanonicalReferences(db, characterId, identity.id);
-  if (!asset) {
+  const references = await listCanonicalReferences(db, characterId, identity.id);
+  if (references.length === 0) {
     throw new CharacterPersonaRegenerationError(
       'no_source_image',
       'This character has no primary reference image, so there is no avatar to analyse.',
     );
   }
 
-  const path = uploadedPathOf(asset);
-  if (!path) {
-    throw new CharacterPersonaRegenerationError(
-      'read_failed',
-      'The primary reference image has no readable file on this server.',
-    );
+  /**
+   * The first reference whose bytes are actually READABLE, not simply the
+   * first one listed.
+   *
+   * WHY THIS WALKS THE LIST. A character's canonical set can legitimately mix
+   * references that have real uploaded files with ones that do not — seeded
+   * placeholder rows carry an external/absent locator, and they sort FIRST
+   * because they hold explicit positions while a fresh upload's position is
+   * null. Taking [0] and failing meant a character could have a perfectly
+   * good uploaded avatar sitting at [1] and still be permanently
+   * un-regenerable, which is how this was found.
+   */
+  let asset: (typeof references)[number] | undefined;
+  let imageBytes: Buffer | undefined;
+  for (const candidate of references) {
+    const path = uploadedPathOf(candidate);
+    if (!path) continue;
+    try {
+      imageBytes = await readFile(path);
+      asset = candidate;
+      break;
+    } catch {
+      // Row says there is a file, disk disagrees. Try the next one.
+    }
   }
-  let imageBytes: Buffer;
-  try {
-    imageBytes = await readFile(path);
-  } catch {
+  if (!asset || !imageBytes) {
     throw new CharacterPersonaRegenerationError(
       'read_failed',
-      'The primary reference image could not be read.',
+      'None of her primary reference images has a readable file on this server. ' +
+        'Upload a reference image and try again.',
     );
   }
 
