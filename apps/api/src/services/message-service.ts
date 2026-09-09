@@ -2,6 +2,7 @@ import { asc, eq } from 'drizzle-orm';
 import type { ChatMediaType, ChatMessage, SendMessageResult } from '@over18/shared';
 import type { Db } from '../db/client.js';
 import {
+  characterPersonas,
   characters,
   characterVisualAssets,
   conversations,
@@ -157,6 +158,14 @@ export async function sendMessage(
     // first. Like systemPrompt, they exist purely server-side in the context.
     const rememberedFacts = await listMemories(tx, userId, conversation.character.id);
 
+    // Phase 2: avatar-derived persona, if one has been generated. Null for
+    // every character today (the table is new) — read the same way as
+    // systemPrompt, server-side only, never on the wire.
+    const [avatarPersonaRow] = await tx
+      .select({ persona: characterPersonas.persona })
+      .from(characterPersonas)
+      .where(eq(characterPersonas.characterId, conversation.character.id));
+
     const [userRow] = await tx
       .insert(messages)
       .values({ conversationId, sender: 'user', content })
@@ -196,6 +205,7 @@ export async function sendMessage(
     const replyText = await replyProvider({
       character: conversation.character,
       systemPrompt: personaRow!.systemPrompt,
+      persona: avatarPersonaRow?.persona ?? null,
       // Explicit arrow, NOT a point-free `.map(toChatMessage)`: map passes the
       // index as the second argument, which is the media-type parameter.
       // The model's history is text-only.

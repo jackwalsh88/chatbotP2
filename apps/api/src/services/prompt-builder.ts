@@ -1,6 +1,10 @@
 import type { ChatMessage } from '@over18/shared';
 import type { LlmMessage } from '../llm/types.js';
 import type { ReplyContext } from './character-reply.js';
+import {
+  compilePersonaVoiceClause,
+  compilePersonaWhoSheIs,
+} from './character-persona-compiler.js';
 
 /**
  * Server-side prompt/context builder (US-09).
@@ -92,11 +96,22 @@ export function buildCharacterSystemPrompt(context: ReplyContext): string {
   if (character.personality.trim()) facts.push(character.personality.trim());
   const interests = character.interests.map((i) => i.trim()).filter(Boolean);
   if (interests.length > 0) facts.push(`She's into ${interests.join(', ')}.`);
+  // Phase 2: avatar-derived identity facts, appended after (never replacing)
+  // the character's own shortBio/personality/interests above. Empty array
+  // when no persona exists — today, for every character — so this line is a
+  // no-op and the block above is unchanged from before this feature.
+  facts.push(...compilePersonaWhoSheIs(context.persona));
   sections.push(['WHO SHE IS', facts.join(' ')].join('\n'));
 
-  // 2. HER VOICE — one bounded line, omitted entirely when unset.
+  // 2. HER VOICE — the code-owned dial (if any) plus a persona-derived voice
+  // clause (if any). Omitted entirely only when BOTH are unset — same as
+  // before this feature when no persona exists.
   const dial = VOICE_DIALS[character.name];
-  if (dial) sections.push(['HER VOICE', `She comes across as ${dial}.`].join('\n'));
+  const personaVoice = compilePersonaVoiceClause(context.persona);
+  const voiceLine = [dial ? `She comes across as ${dial}.` : null, personaVoice]
+    .filter((s): s is string => Boolean(s))
+    .join(' ');
+  if (voiceLine) sections.push(['HER VOICE', voiceLine].join('\n'));
 
   // 3. Remembered user facts (US-12). Rendered as given — bounding happens
   // in createPromptBuilder via selectMemoriesForPrompt, so this stays a pure
