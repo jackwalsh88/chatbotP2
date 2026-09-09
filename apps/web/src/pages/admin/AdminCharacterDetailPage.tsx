@@ -20,6 +20,11 @@ import {
   isPublished,
 } from '../../admin/characterContent';
 import {
+  PERSONA_FIELDS,
+  personaFormDiff,
+  personaToForm,
+} from '../../admin/characterPersona';
+import {
   API_URL,
   ApiRequestError,
   adminCharactersApi,
@@ -28,6 +33,7 @@ import {
   type AdminCharacterDetail,
   type VisualIdentityView,
   type CharacterContentAsset,
+  type CharacterPersonaView,
   contentReviewApi,
 } from '../../lib/api';
 
@@ -89,6 +95,20 @@ export default function AdminCharacterDetailPage() {
   // it must never make the page look like something was written to the server.
   const [autofilling, setAutofilling] = useState(false);
   const [autofilled, setAutofilled] = useState(false);
+
+  // Phase 2 — avatar-derived persona.
+  const [avatarPersona, setAvatarPersona] = useState<CharacterPersonaView | null>(null);
+  const [avatarPersonaOpen, setAvatarPersonaOpen] = useState(false);
+  const [avatarPersonaForm, setAvatarPersonaForm] = useState<Record<string, string>>(
+    personaToForm(undefined),
+  );
+  const [avatarPersonaOriginalForm, setAvatarPersonaOriginalForm] = useState<Record<string, string>>(
+    personaToForm(undefined),
+  );
+  const [avatarPersonaBusy, setAvatarPersonaBusy] = useState(false);
+  const [regeneratingPersona, setRegeneratingPersona] = useState(false);
+  const [avatarPersonaError, setAvatarPersonaError] = useState<string | null>(null);
+  const [avatarPersonaNotice, setAvatarPersonaNotice] = useState<string | null>(null);
 
   const [identityOpen, setIdentityOpen] = useState(false);
   const [dnaForm, setDnaForm] = useState<Record<string, string>>(dnaToForm(undefined));
@@ -212,6 +232,13 @@ export default function AdminCharacterDetailPage() {
       })
       .then(() => adminCharactersApi.content(characterId))
       .then((res) => setContent(res.assets))
+      .then(() => adminCharactersApi.getPersona(characterId))
+      .then((persona) => {
+        setAvatarPersona(persona);
+        const form = personaToForm(persona.persona);
+        setAvatarPersonaForm(form);
+        setAvatarPersonaOriginalForm(form);
+      })
       .catch((err) => {
         if (err instanceof ApiRequestError && err.status === 404) setNotFound(true);
         else setError("Couldn't load this character.");
@@ -414,6 +441,71 @@ export default function AdminCharacterDetailPage() {
       );
     } finally {
       setAutofilling(false);
+    }
+  }
+
+  /**
+   * Saves ONLY the fields the admin actually changed in this session — see
+   * personaFormDiff's own note on why that matters (it's what keeps
+   * editedFields accurate, so regeneration knows exactly what to protect).
+   */
+  async function handleSaveAvatarPersona(characterId: string) {
+    if (avatarPersonaBusy) return;
+    const edits = personaFormDiff(avatarPersonaOriginalForm, avatarPersonaForm);
+    if (Object.keys(edits).length === 0) {
+      setAvatarPersonaOpen(false);
+      return;
+    }
+    setAvatarPersonaBusy(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = await adminCharactersApi.savePersona(characterId, edits);
+      setAvatarPersona(updated);
+      const form = personaToForm(updated.persona);
+      setAvatarPersonaForm(form);
+      setAvatarPersonaOriginalForm(form);
+      setAvatarPersonaOpen(false);
+      setAvatarPersonaNotice('Persona saved.');
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't save her persona.",
+      );
+    } finally {
+      setAvatarPersonaBusy(false);
+    }
+  }
+
+  /**
+   * Re-analyses her current primary reference image. Writes immediately —
+   * unlike Autofill, there is no draft step, because the protection here is
+   * structural: regenerateCharacterPersona never overwrites a field already
+   * in editedFields, so nothing hand-written can be lost by running this.
+   */
+  async function handleRegenerateAvatarPersona(characterId: string) {
+    if (regeneratingPersona) return;
+    setRegeneratingPersona(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = await adminCharactersApi.regeneratePersona(characterId);
+      setAvatarPersona(updated);
+      const form = personaToForm(updated.persona);
+      setAvatarPersonaForm(form);
+      setAvatarPersonaOriginalForm(form);
+      setAvatarPersonaNotice(
+        updated.editedFields.length > 0
+          ? `Persona regenerated. ${updated.editedFields.length} hand-edited field${
+              updated.editedFields.length === 1 ? '' : 's'
+            } kept as-is.`
+          : 'Persona regenerated.',
+      );
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't regenerate her persona.",
+      );
+    } finally {
+      setRegeneratingPersona(false);
     }
   }
 
@@ -637,6 +729,151 @@ export default function AdminCharacterDetailPage() {
               <dt className="text-xs uppercase tracking-wide text-zinc-500">Interests</dt>
               <dd className="text-zinc-300">{character.interests.join(', ') || '—'}</dd>
             </div>
+          </dl>
+        )}
+      </section>
+
+      {/* ---------------- Avatar-derived persona (Phase 2) ---------------- */}
+      <section className="mb-10">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            Avatar-derived persona
+          </h2>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              disabled={regeneratingPersona || primaryReferences.length === 0}
+              title={
+                primaryReferences.length === 0
+                  ? 'Add a primary reference image first'
+                  : undefined
+              }
+              onClick={() => void handleRegenerateAvatarPersona(character.id)}
+              className="text-sm text-rose-400 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {regeneratingPersona ? 'Analysing…' : 'Regenerate from avatar'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!avatarPersonaOpen) {
+                  setAvatarPersonaForm(avatarPersonaOriginalForm);
+                }
+                setAvatarPersonaOpen((o) => !o);
+              }}
+              className="text-sm text-rose-400 hover:text-rose-300"
+            >
+              {avatarPersonaOpen ? 'Cancel' : 'Edit'}
+            </button>
+          </div>
+        </div>
+
+        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+          A richer identity generated from her primary reference image — additional facts and a
+          voice clause rendered into WHO SHE IS / HER VOICE alongside her profile above, never
+          replacing it. Fields you edit here are protected: regenerating never overwrites them.
+        </p>
+
+        {primaryReferences.length === 0 && (
+          <p className="mb-3 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+            No primary reference image yet — add one below before regenerating.
+          </p>
+        )}
+
+        {avatarPersona?.generatedAt && (
+          <p className="mb-3 text-xs text-zinc-500">
+            Last generated {new Date(avatarPersona.generatedAt).toLocaleString()}.
+          </p>
+        )}
+
+        {avatarPersonaError && (
+          <p role="alert" className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
+            {avatarPersonaError}
+          </p>
+        )}
+        {avatarPersonaNotice && !avatarPersonaOpen && (
+          <p role="status" aria-live="polite" className="mb-3 rounded-lg border border-emerald-900 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+            {avatarPersonaNotice}
+          </p>
+        )}
+
+        {avatarPersonaOpen ? (
+          <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+            {PERSONA_FIELDS.map((field) => (
+              <label key={field.key} className="block">
+                <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  {field.label}
+                  {avatarPersona?.editedFields.includes(field.key) && (
+                    <span className="ml-1.5 rounded bg-zinc-800 px-1 py-0.5 text-[9px] normal-case tracking-normal text-zinc-400">
+                      edited
+                    </span>
+                  )}
+                </span>
+                <input
+                  type={field.kind === 'number' ? 'number' : 'text'}
+                  value={avatarPersonaForm[field.key] ?? ''}
+                  onChange={(e) =>
+                    setAvatarPersonaForm({ ...avatarPersonaForm, [field.key]: e.target.value })
+                  }
+                  placeholder={field.kind === 'list' ? 'comma, separated, list' : ''}
+                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+                />
+              </label>
+            ))}
+            {avatarPersona?.persona.sourceSummary && (
+              <p className="text-xs text-zinc-500">
+                Source summary (generator-only, never sent to chat):{' '}
+                {avatarPersona.persona.sourceSummary}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={avatarPersonaBusy}
+                onClick={() => void handleSaveAvatarPersona(character.id)}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {avatarPersonaBusy ? 'Saving…' : 'Save persona fields'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAvatarPersonaForm(avatarPersonaOriginalForm);
+                  setAvatarPersonaOpen(false);
+                }}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <dl className="grid gap-3 rounded-lg border border-zinc-800 p-4 text-sm sm:grid-cols-2">
+            {PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).length ===
+            0 ? (
+              <div className="text-zinc-500 sm:col-span-2">
+                No persona generated yet.{' '}
+                {primaryReferences.length > 0
+                  ? 'Use Regenerate from avatar, or Edit to write one by hand.'
+                  : 'Add a primary reference image, then use Regenerate from avatar.'}
+              </div>
+            ) : (
+              PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).map(
+                (field) => (
+                  <div key={field.key}>
+                    <dt className="text-xs uppercase tracking-wide text-zinc-500">
+                      {field.label}
+                      {avatarPersona?.editedFields.includes(field.key) && (
+                        <span className="ml-1.5 rounded bg-zinc-800 px-1 py-0.5 text-[9px] normal-case tracking-normal text-zinc-400">
+                          edited
+                        </span>
+                      )}
+                    </dt>
+                    <dd className="text-zinc-300">{avatarPersonaForm[field.key]}</dd>
+                  </div>
+                ),
+              )
+            )}
           </dl>
         )}
       </section>
