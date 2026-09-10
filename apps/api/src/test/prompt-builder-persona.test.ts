@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CharacterPersona, PublicCharacter } from '@over18/shared';
 import type { ReplyContext } from '../services/character-reply.js';
-import { buildCharacterSystemPrompt } from '../services/prompt-builder.js';
+import { buildCharacterSystemPrompt, conversationStage } from '../services/prompt-builder.js';
 import { SEED_CHARACTERS } from '../db/seed-data.js';
 
 /**
@@ -147,6 +147,77 @@ describe('the behaviour layer is unaffected by persona', () => {
     expect(section(buildCharacterSystemPrompt(ordinary), 'HOW SHE TALKS')).not.toContain(
       'He has started a scene.',
     );
+  });
+});
+
+describe('how much she offers depends on how well they know each other', () => {
+  it('classifies the stage from the conversation length alone', () => {
+    // priorMessageCount counts both sides, so one exchange is 2.
+    expect(conversationStage(0)).toBe('new');
+    expect(conversationStage(2)).toBe('new');
+    expect(conversationStage(4)).toBe('early');
+    expect(conversationStage(18)).toBe('early');
+    expect(conversationStage(20)).toBe('established');
+    expect(conversationStage(500)).toBe('established');
+  });
+
+  it('tells a brand-new conversation to stay brief and not introduce herself', () => {
+    const behaviour = section(
+      buildCharacterSystemPrompt(contextFor(LUNA, { persona: RICH_PERSONA, priorMessageCount: 0 })),
+      'HOW SHE TALKS',
+    );
+    expect(behaviour).toContain('only just started talking');
+    expect(behaviour).toMatch(/never as an introduction to herself/i);
+  });
+
+  it('opens up once they have been talking a while', () => {
+    const behaviour = section(
+      buildCharacterSystemPrompt(contextFor(LUNA, { persona: RICH_PERSONA, priorMessageCount: 40 })),
+      'HOW SHE TALKS',
+    );
+    expect(behaviour).toContain('comfortable with him');
+    expect(behaviour).toMatch(/take the room something deserves/i);
+  });
+
+  it('never states a sentence count, a word count or a maximum at any stage', () => {
+    // Both attempts at a length budget were measured and rejected in Phase 1;
+    // this asserts none crept back in via the stage wording.
+    for (const priorMessageCount of [0, 6, 40]) {
+      const behaviour = section(
+        buildCharacterSystemPrompt(contextFor(LUNA, { priorMessageCount })),
+        'HOW SHE TALKS',
+      );
+      expect(behaviour).not.toMatch(/\b(one|two|three|four|five)\s+(to\s+\w+\s+)?(sentences?|words?|lines?)\b/i);
+      expect(behaviour).not.toMatch(/\b\d+\s*(sentences?|words?|characters?)\b/i);
+      expect(behaviour).not.toMatch(/\b(match his length|no more than|at most \d)\b/i);
+    }
+  });
+
+  it('keeps the "detail at a time" guard at every stage', () => {
+    for (const priorMessageCount of [0, 6, 40]) {
+      const behaviour = section(
+        buildCharacterSystemPrompt(contextFor(LUNA, { persona: RICH_PERSONA, priorMessageCount })),
+        'HOW SHE TALKS',
+      );
+      expect(behaviour).toMatch(/a detail at a time/i);
+    }
+  });
+
+  it('leaves the four measured principles in place regardless of stage', () => {
+    for (const priorMessageCount of [0, 6, 40]) {
+      const behaviour = section(
+        buildCharacterSystemPrompt(contextFor(LUNA, { priorMessageCount })),
+        'HOW SHE TALKS',
+      );
+      for (const rule of [
+        'Answer the door he opened',
+        'Give it the room it deserves',
+        'When he reaches for you, reach back',
+        'Let her own life show',
+      ]) {
+        expect(behaviour).toContain(rule);
+      }
+    }
   });
 });
 

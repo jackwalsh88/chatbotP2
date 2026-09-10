@@ -63,6 +63,51 @@ export function invitesRoleplay(message: string): boolean {
   return ROLEPLAY_ACTION.test(message) || ROLEPLAY_ASK.test(message);
 }
 
+/**
+ * How far into the relationship this exchange is.
+ *
+ * WHY STAGE AND NOT A LENGTH RULE. Nothing here states a sentence count, a
+ * word budget or a maximum: both attempts at that were measured in Phase 1
+ * and both failed ("usually two to four sentences", then "match his length",
+ * which answered a question about her family in 86 characters and took the
+ * warmth with it). What was actually wrong with the first live Phase 2 reply
+ * was not that a number was missing — it was that a stranger opened with two
+ * hundred words of autobiography. People do not do that. They start short and
+ * open up as they get comfortable, and that is a property of the
+ * RELATIONSHIP, not of the message.
+ *
+ * DERIVED IN CODE, STATED AS A FACT. The count itself never reaches the
+ * model: "this is message 7" invites arithmetic and reads like machinery
+ * showing through, so the server decides the stage and the prompt says where
+ * they are, exactly as it does for the media decision.
+ *
+ * THE THRESHOLDS ARE A CONSIDERED GUESS, NOT A MEASUREMENT. `priorMessageCount`
+ * counts both sides, so one exchange is 2: under 4 is the first couple of
+ * exchanges, under 20 is roughly the first ten. They live here, alone, so
+ * re-tuning them after a real evaluation is a one-line change.
+ */
+export type ConversationStage = 'new' | 'early' | 'established';
+
+export function conversationStage(priorMessageCount: number): ConversationStage {
+  if (priorMessageCount < 4) return 'new';
+  if (priorMessageCount < 20) return 'early';
+  return 'established';
+}
+
+/**
+ * The one always-on rule whose wording depends on how well they know each
+ * other. Every variant keeps "a detail at a time" — the guard against
+ * reciting her profile, which is what a rich persona invites — and varies
+ * only how much room she takes and how much of herself she offers.
+ */
+const STAGE_RULE: Record<ConversationStage, string> = {
+  new: '- You have only just started talking, so stay light and brief the way anyone is at the start. Answer what he actually said and leave it there. Her life comes out later, a detail at a time, as he asks for it — never as an introduction to herself.',
+  early:
+    '- You are still getting to know each other, so give a little more of yourself than you did at the start. Still a detail at a time as it becomes relevant, never several at once and never a summary of who she is.',
+  established:
+    '- You have been talking a while and she is comfortable with him. She can be more open now and take the room something deserves, still answering what he actually asked and still a detail at a time rather than a catalogue.',
+};
+
 /** Character block: who she is → her voice → memories → what she is for → how she talks. */
 export function buildCharacterSystemPrompt(context: ReplyContext): string {
   const { character } = context;
@@ -198,33 +243,33 @@ export function buildCharacterSystemPrompt(context: ReplyContext): string {
    * three and the model recited them word for word, which would have made every
    * character on the roster answer a greeting identically.
    *
-   * "LET IT COME OUT A DETAIL AT A TIME" IS A PHASE 2 ADDITION, and it is here
-   * because Phase 2 caused the fault it fixes. Identity used to be a bio and a
-   * few interests; it is now that plus a compiled persona — job, life stage,
-   * routine, worries, humour, how she flirts. Handed all of it, the model
-   * introduced herself by reading the lot aloud: age, occupation, hobbies and
-   * her own personality field paraphrased back, two hundred words deep, on the
-   * first message. More identity data made a bigger inventory, not a better
-   * person.
+   * THE STAGE RULE IS A PHASE 2 ADDITION, and it is here because Phase 2
+   * caused the fault it fixes. Identity used to be a bio and a few interests;
+   * it is now that plus a compiled persona — job, life stage, routine,
+   * worries, humour, how she flirts. Handed all of it, the model introduced
+   * herself by reading the lot aloud: age, occupation, hobbies and her own
+   * personality field paraphrased back, two hundred words deep, on the FIRST
+   * message. More identity data made a bigger inventory, not a better person.
+   *
+   * WHY IT IS KEYED TO THE RELATIONSHIP AND NOT TO A LENGTH. The fault was
+   * not a missing number, it was a stranger delivering an autobiography.
+   * People start short and open up as they get comfortable, so the dial is
+   * how well they know each other — see conversationStage above, which also
+   * records why no sentence budget appears anywhere in this file.
    *
    * IT BOUNDS "let her own life show" RATHER THAN CONTRADICTING IT. That rule
-   * exists because the behaviour layer used to crowd her identity out entirely,
-   * and it stays. The difference is between a life showing THROUGH what she
-   * says and a life being RECITED: one detail in passing is the former, a
-   * catalogue is the latter.
-   *
-   * NOT A SENTENCE BUDGET. "Usually two to four sentences" and "match his
-   * length" were both measured and both failed — the second answered a
-   * question about her family in 86 characters and the warmth went with the
-   * words. This caps how many FACTS ABOUT HERSELF one reply may carry, and
-   * leaves length keyed to what was asked, which is the rule that held.
+   * exists because the behaviour layer used to crowd her identity out
+   * entirely, and it stays. The difference is between a life showing THROUGH
+   * what she says and a life being RECITED: one detail in passing is the
+   * former, a catalogue is the latter. Every stage variant keeps that guard;
+   * only how much she offers changes.
    */
   const behaviour = [
     'HOW SHE TALKS',
     `You are ${character.displayName}, talking with someone who chose you. Not an assistant, not a narrator.`,
     '- Answer the door he opened. Whatever he actually raised is the subject. Take it up; do not steer to something of yours instead.',
     '- Give it the room it deserves. A throwaway line wants a few words back and a question. A real question, something he is feeling, a story, anything about the two of you, or an invitation wants a proper answer. Length follows what he asked for, never how much he typed.',
-    '- Let it come out a detail at a time. What she does, where she lives, what she is into: one or two of those at most in any reply, and only the ones that fit what he actually asked. She has weeks to tell him the rest.',
+    STAGE_RULE[conversationStage(context.priorMessageCount)],
     '- When he reaches for you, reach back. Flirtation, wanting, desire: meet it in kind and say it plainly. Never dodge it by changing the subject.',
     '- Stay curious. React first, then ask the thing you actually want to know.',
     '- Let her own life show. Her work, her history, her tastes and her opinions belong in what she says. That is what makes her herself and not anyone.',
