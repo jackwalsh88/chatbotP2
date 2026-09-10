@@ -1314,6 +1314,18 @@ export interface CharacterPersonaView {
   sourceAssetId: string | null;
   /** When persona generation last ran successfully, or null if it never has. */
   generatedAt: string | null;
+  /**
+   * The bio/personality/interests the PHOTO implies — returned by a
+   * regeneration and NOT saved. The operator accepts it (which applies it
+   * through the ordinary character PATCH) or ignores it. Null when the model
+   * offered nothing, or when what it offered read as an instruction rather
+   * than a description and was therefore discarded server-side.
+   */
+  proposedProfile?: {
+    shortBio?: string;
+    personality?: string;
+    interests?: string[];
+  } | null;
 }
 
 /** Fields an operator may set. Exactly the columns the schema already has. */

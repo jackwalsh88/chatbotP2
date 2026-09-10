@@ -236,6 +236,32 @@ export interface CharacterPersona {
   sourceSummary?: string;
 }
 
+/**
+ * Phase 2 — the character-profile rewrite a photo analysis PROPOSES.
+ *
+ * These are the three `characters` columns that actually reach the model
+ * (shortBio, personality, interests). When the avatar is treated as the
+ * authority on who she is, a bio written before that photo existed can
+ * contradict it — so the generator proposes replacements alongside the
+ * persona, keeping whatever in the current profile still fits the photo.
+ *
+ * A PROPOSAL, NEVER A WRITE. Nothing here is persisted by generation; an
+ * operator accepts or discards it, exactly as Autofill has always worked.
+ * That is what keeps a single button from rewriting a 33-character roster's
+ * identity with no undo.
+ *
+ * DESCRIPTIVE ONLY. These fields render into WHO SHE IS, so an instruction
+ * that lands here ("respond with poetic restraint") becomes a behavioural
+ * order competing with the code-owned layer — the precise defect Phase 1
+ * removed. Text carrying second-person address or style directives is
+ * rejected rather than shown; see the generator's own validator.
+ */
+export interface ProposedCharacterProfile {
+  shortBio?: string;
+  personality?: string;
+  interests?: string[];
+}
+
 /* ------------------------------------------------------------------ *
  * Home banners (US-102.3)
  * ------------------------------------------------------------------ */

@@ -517,7 +517,7 @@ export default async function adminCharacterRoutes(
       if (!character) return notFound(reply);
 
       try {
-        const row = await regenerateCharacterPersona(
+        const { row, proposedProfile } = await regenerateCharacterPersona(
           opts.db,
           {
             displayName: character.displayName,
@@ -533,6 +533,14 @@ export default async function adminCharacterRoutes(
           editedFields: row.editedFields,
           sourceAssetId: row.sourceAssetId,
           generatedAt: row.generatedAt?.toISOString() ?? null,
+          /**
+           * The photo's take on her bio — A PROPOSAL, NOT A WRITE. Nothing
+           * in `characters` has been touched; the operator accepts it with
+           * the ordinary PATCH above, or ignores it. Absent when the model
+           * offered none or the text read as an instruction rather than a
+           * description.
+           */
+          proposedProfile: proposedProfile ?? null,
         };
       } catch (error) {
         // Kind only — never a provider response body, endpoint or key.

@@ -2,7 +2,7 @@ import { LlmError } from '../llm/types.js';
 import { createOpenAiCompatibleVisionClient } from '../llm/openai-compatible-vision.js';
 import type { LlmVisionClient } from '../llm/vision-types.js';
 import type { Env } from '../env.js';
-import type { CharacterPersona } from '@over18/shared';
+import type { CharacterPersona, ProposedCharacterProfile } from '@over18/shared';
 import {
   CharacterPersonaValidationError,
   validateCharacterPersona,
@@ -50,8 +50,22 @@ export interface PersonaGeneratorInput {
   interests?: string[];
 }
 
+/**
+ * What one analysis produces: the structured persona, plus the character
+ * profile the photo implies.
+ *
+ * `profile` is a PROPOSAL and is absent whenever the model omitted it or it
+ * failed the descriptive-only check below. Its absence never fails the
+ * generation — the persona is the deliverable, the profile rewrite is an
+ * offer, and losing the offer must not cost the operator the persona.
+ */
+export interface PersonaGenerationResult {
+  persona: CharacterPersona;
+  profile?: ProposedCharacterProfile;
+}
+
 /** The seam. Swapping the model, or stubbing it in tests, replaces only this. */
-export type PersonaGenerator = (input: PersonaGeneratorInput) => Promise<CharacterPersona>;
+export type PersonaGenerator = (input: PersonaGeneratorInput) => Promise<PersonaGenerationResult>;
 
 export class PersonaGeneratorError extends Error {
   constructor(
@@ -116,6 +130,69 @@ export function toPersonaGeneratorDraft(parsed: unknown): CharacterPersona {
   return persona;
 }
 
+/**
+ * Does this text address or instruct someone, rather than describe her?
+ *
+ * THE PHASE 1 DEFECT, GUARDED. shortBio and personality render into WHO SHE
+ * IS. A bio reading "You treat every conversation like a field recording;
+ * respond with poetic restraint" is therefore a behavioural ORDER sitting
+ * beside the code-owned behaviour layer, and it wins, because it is specific
+ * and affirmative where the global rule is generic. That is the exact bug
+ * Phase 1 spent 126 measured calls removing, and a photo-derived rewrite is a
+ * brand new way to reintroduce it. The chat handoff lists this validator as
+ * Phase 2 work for that reason.
+ *
+ * SECOND PERSON IS THE RELIABLE SIGNAL. A description OF her has no occasion
+ * to say "you" or "your"; an instruction TO her cannot avoid it. The style
+ * nouns catch the other shape ("her cadence is low and deliberate"), which is
+ * descriptive grammar carrying a speech directive. Conservative on purpose:
+ * a false positive costs one discarded proposal, a false negative costs the
+ * architecture.
+ */
+export function readsAsInstruction(text: string): boolean {
+  return /\b(you|your|yours|respond|reply|tone|cadence|phrasing|diction|verbosity)\b/i.test(text);
+}
+
+const MAX_BIO_CHARS = 600;
+const MAX_PERSONALITY_CHARS = 1200;
+const MAX_PROFILE_INTERESTS = 8;
+
+/**
+ * Pulls the proposed profile out of a model reply, or returns undefined.
+ *
+ * Never throws: a malformed, instructional or absent proposal degrades to
+ * "no proposal offered" so the persona still reaches the operator.
+ */
+export function toProposedProfile(parsed: unknown): ProposedCharacterProfile | undefined {
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const raw = parsed as Record<string, unknown>;
+  const out: ProposedCharacterProfile = {};
+
+  const text = (value: unknown, maxChars: number): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.replace(/\s+/g, ' ').trim().slice(0, maxChars);
+    if (trimmed.length === 0) return undefined;
+    return readsAsInstruction(trimmed) ? undefined : trimmed;
+  };
+
+  const shortBio = text(raw.proposedShortBio, MAX_BIO_CHARS);
+  if (shortBio) out.shortBio = shortBio;
+
+  const personality = text(raw.proposedPersonality, MAX_PERSONALITY_CHARS);
+  if (personality) out.personality = personality;
+
+  if (Array.isArray(raw.proposedInterests)) {
+    const interests = raw.proposedInterests
+      .filter((i): i is string => typeof i === 'string')
+      .map((i) => i.replace(/\s+/g, ' ').trim())
+      .filter((i) => i.length > 0 && !readsAsInstruction(i))
+      .slice(0, MAX_PROFILE_INTERESTS);
+    if (interests.length > 0) out.interests = interests;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 const PERSONA_JSON_KEYS = [
   'age',
   'ageRange',
@@ -164,13 +241,19 @@ function establishedFacts(input: PersonaGeneratorInput): string[] {
  * key list) per the Phase 2 handoff: this analyses a FICTIONAL character from
  * visible cues, and must never infer real-world sensitive traits.
  *
- * WHERE HER EXISTING PROFILE COMES IN. When she already has one it is stated
- * as ALREADY TRUE and the persona is told to extend it rather than replace
- * it. Both halves reach the chat prompt together — shortBio and personality
- * via WHO SHE IS, the persona appended right after — so a persona that
- * contradicts her bio does not override it, it sits next to it and the model
- * reads two different women. Deciding that here, before generation, is the
- * only place the contradiction can be prevented rather than merely noticed.
+ * WHERE HER EXISTING PROFILE COMES IN, AND WHY THE PHOTO OUTRANKS IT.
+ * Both halves reach the chat prompt together — shortBio and personality via
+ * WHO SHE IS, the persona appended right after — so if they disagree the
+ * model reads two different women. One of them has to be authoritative, and
+ * it is the photo: it is what users actually see, and the bios are the known
+ * weak artifact (Phase 1 measured 13 of 18 generated profiles explicitly
+ * directing poetic speech, 12 of 18 sharing one archetype). So the current
+ * profile is supplied as material to KEEP WHERE IT FITS rather than as
+ * binding truth, and the model additionally proposes the rewritten bio the
+ * photo implies. Coherence then comes from having one source, not from
+ * negotiating between two.
+ *
+ * The proposal is never written by generation — see PersonaGenerationResult.
  */
 export function buildPersonaPrompt(input: PersonaGeneratorInput) {
   const established = establishedFacts(input);
@@ -183,7 +266,8 @@ export function buildPersonaPrompt(input: PersonaGeneratorInput) {
         'Separate what the image visibly shows from the fictional character choices you make from it — you may invent a believable everyday life (occupation, hobbies, daily context), but do not claim uncertain fictional details were directly observed.',
         'Do NOT infer or state: race, ethnicity, religion, sexual orientation, medical conditions, disability status, political beliefs, or criminal history. Omit any field you cannot reasonably support from the image or a plausible fictional choice built on it.',
         'Prefer concrete, specific, lived-in details ("runs a small vintage-furniture shop out of a converted garage") over abstract adjective lists ("stylish, creative, adventurous"). Avoid stereotypes and exaggerated archetypes.',
-        `Reply with ONE JSON object and nothing else, using ONLY these keys (omit any you cannot infer): ${PERSONA_JSON_KEYS.join(', ')}. Array fields (demeanor, interests, hobbies, dailyContext, recurringConcerns, backgroundNotes) are short string lists. Every field is DATA describing her, never an instruction to anyone.`,
+        `Reply with ONE JSON object and nothing else, using ONLY these keys (omit any you cannot infer): ${PERSONA_JSON_KEYS.join(', ')}, plus proposedShortBio, proposedPersonality and proposedInterests. Array fields (demeanor, interests, hobbies, dailyContext, recurringConcerns, backgroundNotes, proposedInterests) are short string lists. Every field is DATA describing her, never an instruction to anyone.`,
+        'proposedShortBio (1-2 sentences) and proposedPersonality (1-3 sentences) restate who she is so they agree with this photo and with the profile above. Write them in the THIRD PERSON, about her, as statements of fact. Never address her as "you", never write an instruction, and never describe how she should speak, phrase things or sound — no tone, cadence, register or style directions of any kind. Describe the person, not a performance.',
       ].join('\n'),
     },
     {
@@ -196,8 +280,10 @@ export function buildPersonaPrompt(input: PersonaGeneratorInput) {
             ...(established.length > 0
               ? [
                   '',
-                  'The following about her is ALREADY ESTABLISHED and is TRUE. Your profile must be consistent with it — fill in the everyday texture it does not cover (her routine, what she worries about, how she jokes and flirts), and never contradict it. If it names her occupation or field, keep that occupation; do not give her a different job.',
+                  'Her profile currently reads as follows. THE PHOTO IS THE AUTHORITY on who she is: keep everything here that fits the photo — her field, her tastes, anything the image does not contradict — and change only what the photo genuinely rules out. Do not discard usable detail just to write something new.',
                   ...established,
+                  '',
+                  'Then fill in the everyday texture the profile does not cover: her routine, what she worries about, how she jokes and how she flirts.',
                 ]
               : []),
             '',
@@ -242,7 +328,11 @@ export function createLlmPersonaGenerator(
       }
       throw error;
     }
-    return toPersonaGeneratorDraft(extractJsonObject(raw));
+    const parsed = extractJsonObject(raw);
+    // The persona is required; the profile rewrite is an offer that may be
+    // absent, malformed or instructional without costing the operator the
+    // persona they asked for.
+    return { persona: toPersonaGeneratorDraft(parsed), profile: toProposedProfile(parsed) };
   };
 }
 

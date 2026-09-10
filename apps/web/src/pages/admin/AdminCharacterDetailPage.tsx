@@ -109,6 +109,16 @@ export default function AdminCharacterDetailPage() {
   const [regeneratingPersona, setRegeneratingPersona] = useState(false);
   const [avatarPersonaError, setAvatarPersonaError] = useState<string | null>(null);
   const [avatarPersonaNotice, setAvatarPersonaNotice] = useState<string | null>(null);
+  /**
+   * The photo's proposed rewrite of her bio/personality/interests, awaiting a
+   * decision. Held in state ONLY — nothing is written until Accept, so
+   * navigating away or reloading discards it, which is the safe default for a
+   * change that would overwrite what an operator wrote.
+   */
+  const [proposedProfile, setProposedProfile] = useState<
+    NonNullable<CharacterPersonaView['proposedProfile']> | null
+  >(null);
+  const [applyingProfile, setApplyingProfile] = useState(false);
 
   const [identityOpen, setIdentityOpen] = useState(false);
   const [dnaForm, setDnaForm] = useState<Record<string, string>>(dnaToForm(undefined));
@@ -493,6 +503,7 @@ export default function AdminCharacterDetailPage() {
       const form = personaToForm(updated.persona);
       setAvatarPersonaForm(form);
       setAvatarPersonaOriginalForm(form);
+      setProposedProfile(updated.proposedProfile ?? null);
       setAvatarPersonaNotice(
         updated.editedFields.length > 0
           ? `Details generated from her photo. ${updated.editedFields.length} field${
@@ -506,6 +517,35 @@ export default function AdminCharacterDetailPage() {
       );
     } finally {
       setRegeneratingPersona(false);
+    }
+  }
+
+  /**
+   * Applies the photo's proposed bio through the SAME PATCH the persona
+   * editor above uses. No dedicated write path exists for this, deliberately:
+   * accepting a proposal is an ordinary profile edit that happens to have
+   * been drafted by a model, and routing it through the existing endpoint
+   * means it inherits that endpoint's validation.
+   */
+  async function handleAcceptProposedProfile(characterId: string) {
+    if (!proposedProfile || applyingProfile) return;
+    setApplyingProfile(true);
+    setAvatarPersonaError(null);
+    try {
+      await adminCharactersApi.update(characterId, {
+        ...(proposedProfile.shortBio ? { shortBio: proposedProfile.shortBio } : {}),
+        ...(proposedProfile.personality ? { personality: proposedProfile.personality } : {}),
+        ...(proposedProfile.interests ? { interests: proposedProfile.interests } : {}),
+      });
+      setProposedProfile(null);
+      setAvatarPersonaNotice('Her profile now matches her photo.');
+      load(); // re-read so the Persona section above shows the accepted text
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't update her profile.",
+      );
+    } finally {
+      setApplyingProfile(false);
     }
   }
 
@@ -804,6 +844,72 @@ export default function AdminCharacterDetailPage() {
           <p role="status" aria-live="polite" className="mb-3 rounded-lg border border-emerald-900 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
             {avatarPersonaNotice}
           </p>
+        )}
+
+        {/* The photo's take on her written profile, awaiting a decision.
+            Shown against the current text so the operator is comparing, not
+            trusting — and nothing is written until Accept. */}
+        {proposedProfile && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+            <p className="text-sm font-medium text-amber-200">
+              Her photo suggests a different profile
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-200/80">
+              The Persona above was written before this photo, and the two disagree. Accepting
+              replaces the fields shown; her current text is on the left. Nothing has been saved
+              yet.
+            </p>
+
+            <dl className="mt-3 space-y-3 text-sm">
+              {(
+                [
+                  ['Short bio', character.shortBio, proposedProfile.shortBio],
+                  ['Personality', character.personality, proposedProfile.personality],
+                  [
+                    'Interests',
+                    character.interests.join(', '),
+                    proposedProfile.interests?.join(', '),
+                  ],
+                ] as Array<[string, string, string | undefined]>
+              )
+                .filter(([, , next]) => Boolean(next))
+                .map(([label, current, next]) => (
+                  <div key={label}>
+                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{label}</dt>
+                    <dd className="mt-1 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2 text-zinc-500">
+                        <span className="block text-[10px] uppercase tracking-wide">Now</span>
+                        {current || '—'}
+                      </div>
+                      <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-zinc-200">
+                        <span className="block text-[10px] uppercase tracking-wide text-emerald-400">
+                          From her photo
+                        </span>
+                        {next}
+                      </div>
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={applyingProfile}
+                onClick={() => void handleAcceptProposedProfile(character.id)}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {applyingProfile ? 'Applying…' : 'Accept and replace'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setProposedProfile(null)}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+              >
+                Keep what she has
+              </button>
+            </div>
+          </div>
         )}
 
         {avatarPersonaOpen ? (

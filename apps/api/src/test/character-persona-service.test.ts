@@ -106,7 +106,7 @@ async function characterWithAvatar(): Promise<string> {
   return character.id;
 }
 
-const stubGenerator = (persona: CharacterPersona): PersonaGenerator => async () => persona;
+const stubGenerator = (persona: CharacterPersona): PersonaGenerator => async () => ({ persona });
 const throwingGenerator = (error: PersonaGeneratorError): PersonaGenerator => async () => {
   throw error;
 };
@@ -191,7 +191,7 @@ describe('regenerateCharacterPersona', () => {
     let called = false;
     const generator: PersonaGenerator = async () => {
       called = true;
-      return {};
+      return { persona: {} };
     };
     await expect(
       regenerateCharacterPersona(
@@ -206,7 +206,7 @@ describe('regenerateCharacterPersona', () => {
 
   it('on success, stores the persona, sourceAssetId and generatedAt', async () => {
     const characterId = await characterWithAvatar();
-    const row = await regenerateCharacterPersona(
+    const { row } = await regenerateCharacterPersona(
       ctx.db,
       { displayName: 'Nova' },
       characterId,
@@ -223,7 +223,7 @@ describe('regenerateCharacterPersona', () => {
     const characterId = await characterWithAvatar();
     await saveCharacterPersona(ctx.db, characterId, { occupation: 'hand-edited occupation' });
 
-    const row = await regenerateCharacterPersona(
+    const { row } = await regenerateCharacterPersona(
       ctx.db,
       { displayName: 'Nova' },
       characterId,
@@ -271,7 +271,7 @@ describe('regenerateCharacterPersona', () => {
     });
     expect(uploaded.statusCode).toBe(201);
 
-    const row = await regenerateCharacterPersona(
+    const { row } = await regenerateCharacterPersona(
       ctx.db,
       { displayName: character.displayName },
       character.id,

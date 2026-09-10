@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
-import type { CharacterPersona } from '@over18/shared';
+import type { CharacterPersona, ProposedCharacterProfile } from '@over18/shared';
 import type { Db } from '../db/client.js';
 import { characterPersonas, type CharacterPersonaRow } from '../db/schema.js';
 import {
@@ -241,7 +241,7 @@ export async function regenerateCharacterPersona(
   },
   characterId: string,
   generator: PersonaGenerator,
-): Promise<CharacterPersonaRow> {
+): Promise<{ row: CharacterPersonaRow; proposedProfile?: ProposedCharacterProfile }> {
   const identity = await getActiveVisualIdentity(db, characterId);
   if (!identity) {
     throw new CharacterPersonaRegenerationError(
@@ -294,7 +294,7 @@ export async function regenerateCharacterPersona(
   // ordering above (resolve -> read -> THEN generate) is that neither of
   // those steps has written anything, so a generator failure leaves nothing
   // to undo.
-  const generated: CharacterPersona = await generator({
+  const result = await generator({
     displayName: character.displayName,
     shortBio: character.shortBio,
     personality: character.personality,
@@ -306,7 +306,7 @@ export async function regenerateCharacterPersona(
   const existing = await getCharacterPersona(db, characterId);
   const editedFields = existing?.editedFields ?? [];
   const merged: CharacterPersona = { ...(existing?.persona ?? {}) };
-  for (const [key, value] of Object.entries(generated)) {
+  for (const [key, value] of Object.entries(result.persona)) {
     if (editedFields.includes(key)) continue; // admin edit wins, always
     (merged as Record<string, unknown>)[key] = value;
   }
@@ -330,5 +330,15 @@ export async function regenerateCharacterPersona(
       },
     })
     .returning();
-  return row!;
+  /**
+   * The persona is PERSISTED; the profile rewrite is only RETURNED.
+   *
+   * Autofill has never written to the database, so re-rolling it cannot
+   * destroy an operator's work — and shortBio/personality/interests are
+   * exactly the fields an operator hand-writes. Saving a photo-derived
+   * rewrite of them here would make one button capable of replacing the
+   * whole roster's identity with no undo. The caller shows it and a human
+   * accepts it.
+   */
+  return { row: row!, proposedProfile: result.profile };
 }

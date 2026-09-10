@@ -7,6 +7,7 @@ import {
   createLlmPersonaGenerator,
   extractJsonObject,
   toPersonaGeneratorDraft,
+  toProposedProfile,
   unconfiguredPersonaGenerator,
 } from '../services/character-persona-generator.js';
 
@@ -109,33 +110,107 @@ describe('the instruction set', () => {
   });
 });
 
-describe('her established profile constrains the generated persona', () => {
-  it('states an existing bio/personality/interests as already true, and forbids contradicting them', () => {
-    const messages = buildPersonaPrompt({
-      ...INPUT,
-      shortBio: 'Night-owl astronomy grad student.',
-      personality: 'Dreamy, curious, quietly affectionate.',
-      interests: ['astronomy', 'lo-fi music'],
-    });
-    const userText = (messages[1]!.content as Array<{ type: string; text?: string }>).find(
-      (p) => p.type === 'text',
-    )!.text!;
-    expect(userText).toContain('ALREADY ESTABLISHED');
+function userTextOf(messages: ReturnType<typeof buildPersonaPrompt>): string {
+  return (messages[1]!.content as Array<{ type: string; text?: string }>).find(
+    (p) => p.type === 'text',
+  )!.text!;
+}
+
+describe('the photo outranks her existing profile', () => {
+  it('supplies the current profile, but names the PHOTO as the authority', () => {
+    const userText = userTextOf(
+      buildPersonaPrompt({
+        ...INPUT,
+        shortBio: 'Night-owl astronomy grad student.',
+        personality: 'Dreamy, curious, quietly affectionate.',
+        interests: ['astronomy', 'lo-fi music'],
+      }),
+    );
+    // She is described to the model, so usable detail can be kept...
     expect(userText).toContain('Night-owl astronomy grad student.');
     expect(userText).toContain('Dreamy, curious, quietly affectionate.');
     expect(userText).toContain('astronomy, lo-fi music');
-    // The instruction that stops a bio-contradicting occupation being invented.
-    expect(userText).toMatch(/keep that occupation|never contradict/i);
+    // ...but the image decides when the two disagree.
+    expect(userText).toContain('THE PHOTO IS THE AUTHORITY');
+    expect(userText).toMatch(/keep everything here that fits the photo/i);
   });
 
-  it('says nothing about an established profile when she has none yet', () => {
-    // A quick-created draft: the persona is free to invent, because there is
-    // nothing to contradict.
-    const messages = buildPersonaPrompt({ ...INPUT, shortBio: '', personality: '  ', interests: [] });
-    const userText = (messages[1]!.content as Array<{ type: string; text?: string }>).find(
-      (p) => p.type === 'text',
-    )!.text!;
-    expect(userText).not.toContain('ALREADY ESTABLISHED');
+  it('says nothing about a current profile when she has none yet', () => {
+    const userText = userTextOf(
+      buildPersonaPrompt({ ...INPUT, shortBio: '', personality: '  ', interests: [] }),
+    );
+    expect(userText).not.toContain('THE PHOTO IS THE AUTHORITY');
+  });
+});
+
+describe('the proposed profile rewrite', () => {
+  it('is requested in the third person, with no style or speech directions', () => {
+    const systemText = buildPersonaPrompt(INPUT)[0]!.content as string;
+    expect(systemText).toContain('proposedShortBio');
+    expect(systemText).toContain('proposedPersonality');
+    expect(systemText).toContain('THIRD PERSON');
+    expect(systemText).toMatch(/no tone, cadence, register or style directions/i);
+  });
+
+  it('parses a descriptive proposal', () => {
+    const profile = toProposedProfile({
+      proposedShortBio: 'She is 24 and halfway through an astronomy doctorate.',
+      proposedPersonality: 'Unhurried and watchful, warmer once she trusts someone.',
+      proposedInterests: ['deep-sky photography', 'secondhand bookshops'],
+    });
+    expect(profile?.shortBio).toContain('astronomy doctorate');
+    expect(profile?.interests).toEqual(['deep-sky photography', 'secondhand bookshops']);
+  });
+
+  it('REJECTS text that instructs rather than describes — the Phase 1 defect', () => {
+    // Exactly the shape that broke production before: a bio carrying speech
+    // directions, which then outranks the code-owned behaviour layer.
+    expect(
+      toProposedProfile({
+        proposedShortBio: 'You treat every conversation like a field recording.',
+      }),
+    ).toBeUndefined();
+    expect(
+      toProposedProfile({
+        proposedPersonality: 'Respond with poetic restraint and vivid sensory description.',
+      }),
+    ).toBeUndefined();
+    expect(
+      toProposedProfile({ proposedShortBio: 'Her cadence is low and deliberate.' }),
+    ).toBeUndefined();
+  });
+
+  it('keeps a clean field when a sibling field is instructional', () => {
+    const profile = toProposedProfile({
+      proposedShortBio: 'She is a second-year ER nurse who runs at night.',
+      proposedPersonality: 'Speak in a low, deliberate cadence.',
+    });
+    expect(profile?.shortBio).toContain('ER nurse');
+    expect(profile?.personality).toBeUndefined();
+  });
+
+  it('is absent, not an error, when the model offers none', () => {
+    expect(toProposedProfile({ age: 24 })).toBeUndefined();
+    expect(toProposedProfile(null)).toBeUndefined();
+    expect(toProposedProfile('nope')).toBeUndefined();
+  });
+
+  it('an absent proposal never costs the operator the persona', async () => {
+    // The persona is the deliverable; the rewrite is an offer.
+    const generator = createLlmPersonaGenerator(clientReturning(JSON.stringify(GOOD)));
+    const result = await generator(INPUT);
+    expect(result.persona.occupation).toBe('second-year ER nurse');
+    expect(result.profile).toBeUndefined();
+  });
+
+  it('carries the proposal through when the model does offer one', async () => {
+    const generator = createLlmPersonaGenerator(
+      clientReturning(
+        JSON.stringify({ ...GOOD, proposedShortBio: 'She is 27 and works nights in an ER.' }),
+      ),
+    );
+    const result = await generator(INPUT);
+    expect(result.profile?.shortBio).toContain('works nights in an ER');
   });
 });
 
@@ -143,8 +218,8 @@ describe('the generator', () => {
   it('turns a model reply into a persona, and passes the image through', async () => {
     const seen: LlmVisionRequest[] = [];
     const generator = createLlmPersonaGenerator(clientReturning(JSON.stringify(GOOD), seen));
-    const persona = await generator(INPUT);
-    expect(persona.occupation).toBe('second-year ER nurse');
+    const result = await generator(INPUT);
+    expect(result.persona.occupation).toBe('second-year ER nurse');
     expect(seen[0]!.messages[0]!.role).toBe('system');
   });
 
