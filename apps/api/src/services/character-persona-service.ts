@@ -227,7 +227,18 @@ export class CharacterPersonaRegenerationError extends Error {
  */
 export async function regenerateCharacterPersona(
   db: Db,
-  displayName: string,
+  /**
+   * Her established profile. Passed to the generator so the persona it
+   * writes stays consistent with a bio an operator already wrote, rather
+   * than inventing a second, contradictory life — see
+   * PersonaGeneratorInput's note on why conflict is prevented here.
+   */
+  character: {
+    displayName: string;
+    shortBio?: string;
+    personality?: string;
+    interests?: string[];
+  },
   characterId: string,
   generator: PersonaGenerator,
 ): Promise<CharacterPersonaRow> {
@@ -284,7 +295,10 @@ export async function regenerateCharacterPersona(
   // those steps has written anything, so a generator failure leaves nothing
   // to undo.
   const generated: CharacterPersona = await generator({
-    displayName,
+    displayName: character.displayName,
+    shortBio: character.shortBio,
+    personality: character.personality,
+    interests: character.interests,
     imageBytes,
     imageMimeType: uploadedMimeTypeOf(asset),
   });

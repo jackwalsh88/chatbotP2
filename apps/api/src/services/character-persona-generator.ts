@@ -26,6 +26,28 @@ export interface PersonaGeneratorInput {
   imageBytes: Buffer;
   /** The image's stored MIME type (e.g. "image/jpeg"). */
   imageMimeType: string;
+  /**
+   * Her ALREADY-ESTABLISHED profile, if an operator has written one.
+   *
+   * WHY THE GENERATOR NEEDS THIS. The handoff's priority order is explicit:
+   * stored character data OUTRANKS the avatar-derived persona. Without these,
+   * the model sees only a face and invents a life from scratch — so a
+   * character whose bio says "astronomy grad student" came back as an ER
+   * nurse, and both then reached the prompt together, because shortBio and
+   * personality are rendered into WHO SHE IS alongside the persona.
+   *
+   * Conflict is PREVENTED here rather than detected later. Detecting it would
+   * mean semantically comparing two prose descriptions — a classifier, which
+   * this codebase deliberately does not build (see prompt-builder.ts on why
+   * roleplay detection is structural and intimacy detection does not exist).
+   * Telling the model what is already true costs nothing and cannot misfire.
+   *
+   * Blank for a quick-created draft with no profile yet, in which case the
+   * persona is free to invent — there is nothing to contradict.
+   */
+  shortBio?: string;
+  personality?: string;
+  interests?: string[];
 }
 
 /** The seam. Swapping the model, or stubbing it in tests, replaces only this. */
@@ -116,6 +138,24 @@ const PERSONA_JSON_KEYS = [
 ] as const satisfies ReadonlyArray<keyof CharacterPersona>;
 
 /**
+ * Her established profile, restated for the generator as binding facts.
+ *
+ * Returns an empty array when nothing is written yet, so a quick-created
+ * draft's prompt is byte-identical to before this existed.
+ */
+function establishedFacts(input: PersonaGeneratorInput): string[] {
+  const facts: string[] = [];
+  const bio = input.shortBio?.trim();
+  const personality = input.personality?.trim();
+  const interests = (input.interests ?? []).map((i) => i.trim()).filter(Boolean);
+
+  if (bio) facts.push(`- Her bio: ${bio}`);
+  if (personality) facts.push(`- How she comes across: ${personality}`);
+  if (interests.length > 0) facts.push(`- Her interests: ${interests.join(', ')}`);
+  return facts;
+}
+
+/**
  * The instruction set + the image, kept beside its own parser rather than in
  * the prompt builder: this is an authoring tool that runs once at
  * creation/regeneration time, not part of how a character speaks in chat.
@@ -123,8 +163,17 @@ const PERSONA_JSON_KEYS = [
  * Privacy guardrails are stated explicitly and repeatedly (system message AND
  * key list) per the Phase 2 handoff: this analyses a FICTIONAL character from
  * visible cues, and must never infer real-world sensitive traits.
+ *
+ * WHERE HER EXISTING PROFILE COMES IN. When she already has one it is stated
+ * as ALREADY TRUE and the persona is told to extend it rather than replace
+ * it. Both halves reach the chat prompt together — shortBio and personality
+ * via WHO SHE IS, the persona appended right after — so a persona that
+ * contradicts her bio does not override it, it sits next to it and the model
+ * reads two different women. Deciding that here, before generation, is the
+ * only place the contradiction can be prevented rather than merely noticed.
  */
 export function buildPersonaPrompt(input: PersonaGeneratorInput) {
+  const established = establishedFacts(input);
   return [
     {
       role: 'system' as const,
@@ -140,7 +189,21 @@ export function buildPersonaPrompt(input: PersonaGeneratorInput) {
     {
       role: 'user' as const,
       content: [
-        { type: 'text' as const, text: `Analyse this reference image for "${input.displayName}" and write her profile as the JSON object described. Reply with the JSON object only.` },
+        {
+          type: 'text' as const,
+          text: [
+            `Analyse this reference image for "${input.displayName}" and write her profile as the JSON object described.`,
+            ...(established.length > 0
+              ? [
+                  '',
+                  'The following about her is ALREADY ESTABLISHED and is TRUE. Your profile must be consistent with it — fill in the everyday texture it does not cover (her routine, what she worries about, how she jokes and flirts), and never contradict it. If it names her occupation or field, keep that occupation; do not give her a different job.',
+                  ...established,
+                ]
+              : []),
+            '',
+            'Reply with the JSON object only.',
+          ].join('\n'),
+        },
         {
           type: 'image_url' as const,
           image_url: { url: `data:${input.imageMimeType};base64,${input.imageBytes.toString('base64')}` },

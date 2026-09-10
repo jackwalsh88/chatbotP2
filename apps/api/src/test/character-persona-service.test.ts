@@ -194,7 +194,12 @@ describe('regenerateCharacterPersona', () => {
       return {};
     };
     await expect(
-      regenerateCharacterPersona(ctx.db, character.displayName, character.id, generator),
+      regenerateCharacterPersona(
+        ctx.db,
+        { displayName: character.displayName },
+        character.id,
+        generator,
+      ),
     ).rejects.toThrow(CharacterPersonaRegenerationError);
     expect(called).toBe(false);
   });
@@ -203,7 +208,7 @@ describe('regenerateCharacterPersona', () => {
     const characterId = await characterWithAvatar();
     const row = await regenerateCharacterPersona(
       ctx.db,
-      'Nova',
+      { displayName: 'Nova' },
       characterId,
       stubGenerator({ occupation: 'barista', age: 24 }),
     );
@@ -220,7 +225,7 @@ describe('regenerateCharacterPersona', () => {
 
     const row = await regenerateCharacterPersona(
       ctx.db,
-      'Nova',
+      { displayName: 'Nova' },
       characterId,
       stubGenerator({ occupation: 'generated occupation', age: 30 }),
     );
@@ -268,7 +273,7 @@ describe('regenerateCharacterPersona', () => {
 
     const row = await regenerateCharacterPersona(
       ctx.db,
-      character.displayName,
+      { displayName: character.displayName },
       character.id,
       stubGenerator({ occupation: 'barista' }),
     );
@@ -285,7 +290,7 @@ describe('regenerateCharacterPersona', () => {
     await expect(
       regenerateCharacterPersona(
         ctx.db,
-        'Nova',
+        { displayName: 'Nova' },
         characterId,
         throwingGenerator(new PersonaGeneratorError('unavailable', 'boom')),
       ),
@@ -300,7 +305,7 @@ describe('regenerateCharacterPersona', () => {
     await expect(
       regenerateCharacterPersona(
         ctx.db,
-        'Nova',
+        { displayName: 'Nova' },
         characterId,
         throwingGenerator(new PersonaGeneratorError('invalid_output', 'boom')),
       ),

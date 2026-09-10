@@ -109,6 +109,36 @@ describe('the instruction set', () => {
   });
 });
 
+describe('her established profile constrains the generated persona', () => {
+  it('states an existing bio/personality/interests as already true, and forbids contradicting them', () => {
+    const messages = buildPersonaPrompt({
+      ...INPUT,
+      shortBio: 'Night-owl astronomy grad student.',
+      personality: 'Dreamy, curious, quietly affectionate.',
+      interests: ['astronomy', 'lo-fi music'],
+    });
+    const userText = (messages[1]!.content as Array<{ type: string; text?: string }>).find(
+      (p) => p.type === 'text',
+    )!.text!;
+    expect(userText).toContain('ALREADY ESTABLISHED');
+    expect(userText).toContain('Night-owl astronomy grad student.');
+    expect(userText).toContain('Dreamy, curious, quietly affectionate.');
+    expect(userText).toContain('astronomy, lo-fi music');
+    // The instruction that stops a bio-contradicting occupation being invented.
+    expect(userText).toMatch(/keep that occupation|never contradict/i);
+  });
+
+  it('says nothing about an established profile when she has none yet', () => {
+    // A quick-created draft: the persona is free to invent, because there is
+    // nothing to contradict.
+    const messages = buildPersonaPrompt({ ...INPUT, shortBio: '', personality: '  ', interests: [] });
+    const userText = (messages[1]!.content as Array<{ type: string; text?: string }>).find(
+      (p) => p.type === 'text',
+    )!.text!;
+    expect(userText).not.toContain('ALREADY ESTABLISHED');
+  });
+});
+
 describe('the generator', () => {
   it('turns a model reply into a persona, and passes the image through', async () => {
     const seen: LlmVisionRequest[] = [];
