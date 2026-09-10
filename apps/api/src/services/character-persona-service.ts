@@ -199,6 +199,49 @@ export async function saveCharacterPersona(
   return row!;
 }
 
+/**
+ * Releases a field back to autopilot — or all of them.
+ *
+ * WHY THIS HAS TO EXIST. Typing into a field records it in `editedFields`,
+ * and regeneration then skips it forever. That is the right default when a
+ * human has deliberately written something, but without a way back it is a
+ * one-way door: the only escape was a DELETE against the database, and a
+ * pinned field an operator no longer remembers pinning quietly stops
+ * tracking her photo. On a roster meant to run mostly on autopilot, opting
+ * out has to be as reversible as opting in.
+ *
+ * IT CLEARS THE PIN, NOT THE TEXT. The field keeps its current value until
+ * the next generation replaces it, because the generated value it would
+ * revert TO is not stored anywhere — persona holds the merged result, not
+ * both sides. Blanking the text here would destroy the operator's words
+ * immediately in exchange for nothing, so the honest behaviour is: stop
+ * protecting it, and let the next run of the photo update it.
+ *
+ * Omit `field` to release everything. Unknown or already-unpinned fields are
+ * a no-op rather than an error — the caller is asking for an end state, not
+ * performing a transition.
+ */
+export async function releaseCharacterPersonaField(
+  db: Db,
+  characterId: string,
+  field?: string,
+): Promise<CharacterPersonaRow | null> {
+  const existing = await getCharacterPersona(db, characterId);
+  if (!existing) return null;
+
+  const editedFields = field
+    ? existing.editedFields.filter((f) => f !== field)
+    : [];
+  if (editedFields.length === existing.editedFields.length) return existing;
+
+  const [row] = await db
+    .update(characterPersonas)
+    .set({ editedFields, updatedAt: new Date() })
+    .where(eq(characterPersonas.characterId, characterId))
+    .returning();
+  return row ?? null;
+}
+
 export class CharacterPersonaRegenerationError extends Error {
   constructor(
     public readonly kind: 'no_source_image' | 'read_failed',

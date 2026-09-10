@@ -504,13 +504,27 @@ export default function AdminCharacterDetailPage() {
       setAvatarPersonaForm(form);
       setAvatarPersonaOriginalForm(form);
       setProposedProfile(updated.proposedProfile ?? null);
+      const applied = updated.appliedProfileFields ?? [];
       setAvatarPersonaNotice(
-        updated.editedFields.length > 0
-          ? `Details generated from her photo. ${updated.editedFields.length} field${
-              updated.editedFields.length === 1 ? '' : 's'
-            } you wrote yourself were kept unchanged.`
-          : 'Details generated from her photo.',
+        [
+          'Details generated from her photo.',
+          applied.length > 0
+            ? `Her ${applied.join(', ')} ${applied.length === 1 ? 'was' : 'were'} empty, so ${
+                applied.length === 1 ? 'it was' : 'they were'
+              } filled in automatically.`
+            : null,
+          updated.editedFields.length > 0
+            ? `${updated.editedFields.length} field${
+                updated.editedFields.length === 1 ? '' : 's'
+              } you wrote yourself ${
+                updated.editedFields.length === 1 ? 'was' : 'were'
+              } kept unchanged.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
       );
+      if (applied.length > 0) load(); // the Persona section above just changed
     } catch (err) {
       setAvatarPersonaError(
         err instanceof ApiRequestError ? err.message : "Couldn't regenerate her persona.",
@@ -546,6 +560,35 @@ export default function AdminCharacterDetailPage() {
       );
     } finally {
       setApplyingProfile(false);
+    }
+  }
+
+  /**
+   * Hands a pinned field (or all of them) back to autopilot. The pin is
+   * cleared, the text stands until the next generation replaces it — so this
+   * is safe to click and does not silently blank anything.
+   */
+  async function handleReleasePersonaField(characterId: string, field?: string) {
+    if (avatarPersonaBusy) return;
+    setAvatarPersonaBusy(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = field
+        ? await adminCharactersApi.releasePersonaField(characterId, field)
+        : await adminCharactersApi.releaseAllPersonaFields(characterId);
+      setAvatarPersona(updated);
+      setAvatarPersonaNotice(
+        field
+          ? 'Her photo will update that field again next time you generate.'
+          : 'All fields released — her photo controls everything again.',
+      );
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't release that field.",
+      );
+    } finally {
+      setAvatarPersonaBusy(false);
     }
   }
 
@@ -835,6 +878,28 @@ export default function AdminCharacterDetailPage() {
           </p>
         )}
 
+        {/* How much of her is still on autopilot, stated rather than implied.
+            Pinned fields stop tracking her photo, so the count and the way
+            back both belong where an operator will see them. */}
+        {avatarPersona && avatarPersona.editedFields.length > 0 && (
+          <p className="mb-3 flex flex-wrap items-center gap-2 text-xs text-amber-300/90">
+            <span>
+              {avatarPersona.editedFields.length} field
+              {avatarPersona.editedFields.length === 1 ? '' : 's'} you wrote by hand
+              {avatarPersona.editedFields.length === 1 ? ' is' : ' are'} kept as-is — generating
+              from her photo will not change {avatarPersona.editedFields.length === 1 ? 'it' : 'them'}.
+            </span>
+            <button
+              type="button"
+              disabled={avatarPersonaBusy}
+              onClick={() => void handleReleasePersonaField(character.id)}
+              className="text-rose-400 underline hover:text-rose-300 disabled:opacity-50"
+            >
+              Release all
+            </button>
+          </p>
+        )}
+
         {avatarPersonaError && (
           <p role="alert" className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
             {avatarPersonaError}
@@ -979,9 +1044,28 @@ export default function AdminCharacterDetailPage() {
                     <dt className="text-xs uppercase tracking-wide text-zinc-500">
                       {field.label}
                       {avatarPersona?.editedFields.includes(field.key) && (
-                        <span className="ml-1.5 rounded bg-zinc-800 px-1 py-0.5 text-[9px] normal-case tracking-normal text-zinc-400">
-                          edited
-                        </span>
+                        <>
+                          {/* A pinned field no longer tracks her photo. Saying
+                              so plainly, with the way back attached, is what
+                              stops this becoming a one-way door nobody
+                              remembers walking through. */}
+                          <span
+                            title="You wrote this by hand, so generating from her photo leaves it alone."
+                            className="ml-1.5 rounded bg-amber-950 px-1 py-0.5 text-[9px] normal-case tracking-normal text-amber-300"
+                          >
+                            yours
+                          </span>
+                          <button
+                            type="button"
+                            disabled={avatarPersonaBusy}
+                            onClick={() =>
+                              void handleReleasePersonaField(character.id, field.key)
+                            }
+                            className="ml-1.5 text-[9px] normal-case tracking-normal text-rose-400 hover:text-rose-300 disabled:opacity-50"
+                          >
+                            release
+                          </button>
+                        </>
                       )}
                     </dt>
                     <dd className="text-zinc-300">{avatarPersonaForm[field.key]}</dd>

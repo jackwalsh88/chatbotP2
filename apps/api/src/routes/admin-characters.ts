@@ -22,6 +22,7 @@ import {
   CharacterPersonaValidationError,
   getCharacterPersona,
   regenerateCharacterPersona,
+  releaseCharacterPersonaField,
   saveCharacterPersona,
 } from '../services/character-persona-service.js';
 import {
@@ -501,6 +502,51 @@ export default async function adminCharacterRoutes(
   );
 
   /**
+   * Hands a hand-edited field back to autopilot, or all of them.
+   *
+   * The counterpart to the pin that PATCH creates. Without this, opting a
+   * field out of photo-generation is a one-way door escapable only with
+   * database access — see releaseCharacterPersonaField on why it clears the
+   * pin and not the text.
+   */
+  app.delete<{ Params: { characterId: string; field?: string } }>(
+    '/admin/characters/:characterId/persona/edits/:field',
+    adminOnly,
+    async (request, reply) => {
+      const { characterId, field } = request.params;
+      if (!UUID_RE.test(characterId)) return notFound(reply);
+      if (!(await getCharacterForAdmin(opts.db, characterId))) return notFound(reply);
+
+      const row = await releaseCharacterPersonaField(opts.db, characterId, field);
+      return {
+        persona: row?.persona ?? {},
+        editedFields: row?.editedFields ?? [],
+        sourceAssetId: row?.sourceAssetId ?? null,
+        generatedAt: row?.generatedAt?.toISOString() ?? null,
+      };
+    },
+  );
+
+  /** Releases EVERY pinned field — back to full autopilot for this character. */
+  app.delete<{ Params: { characterId: string } }>(
+    '/admin/characters/:characterId/persona/edits',
+    adminOnly,
+    async (request, reply) => {
+      const { characterId } = request.params;
+      if (!UUID_RE.test(characterId)) return notFound(reply);
+      if (!(await getCharacterForAdmin(opts.db, characterId))) return notFound(reply);
+
+      const row = await releaseCharacterPersonaField(opts.db, characterId);
+      return {
+        persona: row?.persona ?? {},
+        editedFields: row?.editedFields ?? [],
+        sourceAssetId: row?.sourceAssetId ?? null,
+        generatedAt: row?.generatedAt?.toISOString() ?? null,
+      };
+    },
+  );
+
+  /**
    * Re-analyses the character's current primary reference image and merges
    * the result into her persona. WRITES IMMEDIATELY (unlike Autofill's
    * draft-only flow) because the protection here is structural, not
@@ -528,19 +574,62 @@ export default async function adminCharacterRoutes(
           characterId,
           personaGenerator,
         );
+        /**
+         * AUTOPILOT WHERE THERE IS NOTHING TO LOSE; REVIEW WHERE THERE IS.
+         *
+         * This roster is meant to run mostly unattended, so requiring a
+         * human to press Accept for every character is a bottleneck that
+         * grows with the roster. But the reason Accept exists — never
+         * destroying what an operator wrote — is not negotiable either.
+         *
+         * The two cases are genuinely different, and the difference is
+         * per FIELD, not per character: writing into a field that is
+         * currently EMPTY cannot destroy anything, so it needs no
+         * permission. Overwriting a field that already has text is the only
+         * case where a human's work is at stake, and that is the only case
+         * that waits for one.
+         *
+         * A quick-created character (blank profile by construction) is
+         * therefore fully automatic, and a hand-written one still gets a
+         * side-by-side comparison — from the same code path, decided one
+         * field at a time.
+         */
+        const applied: Record<string, unknown> = {};
+        const needsReview: Record<string, unknown> = {};
+        if (proposedProfile) {
+          const isBlank = (value: string) => value.trim().length === 0;
+          if (proposedProfile.shortBio !== undefined) {
+            (isBlank(character.shortBio) ? applied : needsReview).shortBio =
+              proposedProfile.shortBio;
+          }
+          if (proposedProfile.personality !== undefined) {
+            (isBlank(character.personality) ? applied : needsReview).personality =
+              proposedProfile.personality;
+          }
+          if (proposedProfile.interests !== undefined) {
+            (character.interests.length === 0 ? applied : needsReview).interests =
+              proposedProfile.interests;
+          }
+        }
+        if (Object.keys(applied).length > 0) {
+          await updateCharacter(opts.db, characterId, applied as never);
+        }
+
         return {
           persona: row.persona,
           editedFields: row.editedFields,
           sourceAssetId: row.sourceAssetId,
           generatedAt: row.generatedAt?.toISOString() ?? null,
           /**
-           * The photo's take on her bio — A PROPOSAL, NOT A WRITE. Nothing
-           * in `characters` has been touched; the operator accepts it with
-           * the ordinary PATCH above, or ignores it. Absent when the model
-           * offered none or the text read as an instruction rather than a
-           * description.
+           * Only the fields that would OVERWRITE existing text. Nothing here
+           * has been written; the operator accepts it (the ordinary PATCH
+           * above) or ignores it. Null when the photo's version either
+           * agreed with what was already blank, was never offered, or read
+           * as an instruction rather than a description.
            */
-          proposedProfile: proposedProfile ?? null,
+          proposedProfile: Object.keys(needsReview).length > 0 ? needsReview : null,
+          /** Fields filled in automatically because they were empty. */
+          appliedProfileFields: Object.keys(applied),
         };
       } catch (error) {
         // Kind only — never a provider response body, endpoint or key.

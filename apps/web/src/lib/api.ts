@@ -1326,6 +1326,13 @@ export interface CharacterPersonaView {
     personality?: string;
     interests?: string[];
   } | null;
+  /**
+   * Profile fields the server filled in automatically because they were
+   * empty — writing into a blank field cannot destroy anything, so it needs
+   * no permission. Only fields that would OVERWRITE text appear in
+   * `proposedProfile` and wait for a decision.
+   */
+  appliedProfileFields?: string[];
 }
 
 /** Fields an operator may set. Exactly the columns the schema already has. */
@@ -1522,6 +1529,22 @@ export const adminCharactersApi = {
     request<CharacterPersonaView>(
       `/admin/characters/${encodeURIComponent(characterId)}/persona/regenerate`,
       { method: 'POST' },
+    ),
+  /**
+   * Hands one hand-edited field back to autopilot — the counterpart to the
+   * pin that savePersona creates. Clears the pin, not the text: the value
+   * stands until the next generation updates it.
+   */
+  releasePersonaField: (characterId: string, field: string) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona/edits/${encodeURIComponent(field)}`,
+      { method: 'DELETE' },
+    ),
+  /** Releases every pinned field — back to full autopilot for this character. */
+  releaseAllPersonaFields: (characterId: string) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona/edits`,
+      { method: 'DELETE' },
     ),
 };
 
