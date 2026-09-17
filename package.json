@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "predev": "npm run build -w packages/shared",
     "dev": "npm-run-all --parallel dev:web dev:api",
     "dev:web": "npm run dev --workspace apps/web",
     "dev:api": "npm run dev --workspace apps/api",

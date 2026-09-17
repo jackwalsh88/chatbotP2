@@ -1280,6 +1280,61 @@ export interface AdminCharacterDetail {
   primaryReferences: PrimaryReferenceView[];
 }
 
+/**
+ * Phase 2 — avatar-derived persona. Structured identity data, internal like
+ * `systemPrompt`: rendered into WHO SHE IS / HER VOICE server-side, never
+ * shown to end users. Every field is optional.
+ */
+export interface CharacterPersonaFields {
+  age?: number;
+  ageRange?: string;
+  lifeStage?: string;
+  occupation?: string;
+  education?: string;
+  visualStyle?: string;
+  demeanor?: string[];
+  interests?: string[];
+  hobbies?: string[];
+  dailyContext?: string[];
+  recurringConcerns?: string[];
+  socialStyle?: string;
+  humorStyle?: string;
+  flirtingStyle?: string;
+  speechRegister?: string;
+  backgroundNotes?: string[];
+  relationshipToWorkOrSchool?: string;
+  sourceSummary?: string;
+}
+
+export interface CharacterPersonaView {
+  persona: CharacterPersonaFields;
+  /** Which fields an admin has explicitly set by hand — regeneration never overwrites these. */
+  editedFields: string[];
+  /** The canonical reference image the current generated content came from, if any. */
+  sourceAssetId: string | null;
+  /** When persona generation last ran successfully, or null if it never has. */
+  generatedAt: string | null;
+  /**
+   * The bio/personality/interests the PHOTO implies — returned by a
+   * regeneration and NOT saved. The operator accepts it (which applies it
+   * through the ordinary character PATCH) or ignores it. Null when the model
+   * offered nothing, or when what it offered read as an instruction rather
+   * than a description and was therefore discarded server-side.
+   */
+  proposedProfile?: {
+    shortBio?: string;
+    personality?: string;
+    interests?: string[];
+  } | null;
+  /**
+   * Profile fields the server filled in automatically because they were
+   * empty — writing into a blank field cannot destroy anything, so it needs
+   * no permission. Only fields that would OVERWRITE text appear in
+   * `proposedProfile` and wait for a decision.
+   */
+  appliedProfileFields?: string[];
+}
+
 /** Fields an operator may set. Exactly the columns the schema already has. */
 export interface CharacterDraft {
   name: string;
@@ -1456,6 +1511,41 @@ export const adminCharactersApi = {
     request<PrimaryReferenceView>(`/admin/references/${encodeURIComponent(assetId)}/primary`, {
       method: 'POST',
     }),
+  /* ---------------- Phase 2: avatar-derived persona ---------------- */
+  getPersona: (characterId: string) =>
+    request<CharacterPersonaView>(`/admin/characters/${encodeURIComponent(characterId)}/persona`),
+  /** Partial. Every key sent is validated, merged in, and protected from a later regeneration. */
+  savePersona: (characterId: string, edits: Partial<CharacterPersonaFields>) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona`,
+      { method: 'PATCH', body: JSON.stringify(edits) },
+    ),
+  /**
+   * Re-analyses the character's primary reference image. Writes immediately
+   * (unlike Autofill) — an admin-edited field is protected structurally, not
+   * by a review step, so there is nothing to discard on a bad regeneration.
+   */
+  regeneratePersona: (characterId: string) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona/regenerate`,
+      { method: 'POST' },
+    ),
+  /**
+   * Hands one hand-edited field back to autopilot — the counterpart to the
+   * pin that savePersona creates. Clears the pin, not the text: the value
+   * stands until the next generation updates it.
+   */
+  releasePersonaField: (characterId: string, field: string) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona/edits/${encodeURIComponent(field)}`,
+      { method: 'DELETE' },
+    ),
+  /** Releases every pinned field — back to full autopilot for this character. */
+  releaseAllPersonaFields: (characterId: string) =>
+    request<CharacterPersonaView>(
+      `/admin/characters/${encodeURIComponent(characterId)}/persona/edits`,
+      { method: 'DELETE' },
+    ),
 };
 
 /* ------------------------------------------------------------------ *

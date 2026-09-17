@@ -1,4 +1,4 @@
-import type { ChatMessage, PublicCharacter } from '@over18/shared';
+import type { CharacterPersona, ChatMessage, PublicCharacter } from '@over18/shared';
 
 /**
  * Reply-provider seam (US-07, extended in US-08).
@@ -29,6 +29,14 @@ export interface ReplyContext {
    * Optional so existing ReplyProvider callers/fixtures stay source-compatible.
    */
   memories?: string[];
+  /**
+   * Phase 2 — avatar-derived identity data, if a persona has been generated
+   * for this character. Rendered into WHO SHE IS / HER VOICE only (see
+   * prompt-builder.ts's compilePersonaWhoSheIs/compilePersonaVoiceClause);
+   * never exposed on the wire. Optional/nullable so existing ReplyProvider
+   * callers and fixtures stay source-compatible.
+   */
+  persona?: CharacterPersona | null;
   /**
    * Set when the server has ALREADY decided to attach media to this reply, and
    * to which kind. Null/absent on every ordinary turn.

@@ -20,6 +20,11 @@ import {
   isPublished,
 } from '../../admin/characterContent';
 import {
+  PERSONA_FIELDS,
+  personaFormDiff,
+  personaToForm,
+} from '../../admin/characterPersona';
+import {
   API_URL,
   ApiRequestError,
   adminCharactersApi,
@@ -28,6 +33,7 @@ import {
   type AdminCharacterDetail,
   type VisualIdentityView,
   type CharacterContentAsset,
+  type CharacterPersonaView,
   contentReviewApi,
 } from '../../lib/api';
 
@@ -89,6 +95,30 @@ export default function AdminCharacterDetailPage() {
   // it must never make the page look like something was written to the server.
   const [autofilling, setAutofilling] = useState(false);
   const [autofilled, setAutofilled] = useState(false);
+
+  // Phase 2 — avatar-derived persona.
+  const [avatarPersona, setAvatarPersona] = useState<CharacterPersonaView | null>(null);
+  const [avatarPersonaOpen, setAvatarPersonaOpen] = useState(false);
+  const [avatarPersonaForm, setAvatarPersonaForm] = useState<Record<string, string>>(
+    personaToForm(undefined),
+  );
+  const [avatarPersonaOriginalForm, setAvatarPersonaOriginalForm] = useState<Record<string, string>>(
+    personaToForm(undefined),
+  );
+  const [avatarPersonaBusy, setAvatarPersonaBusy] = useState(false);
+  const [regeneratingPersona, setRegeneratingPersona] = useState(false);
+  const [avatarPersonaError, setAvatarPersonaError] = useState<string | null>(null);
+  const [avatarPersonaNotice, setAvatarPersonaNotice] = useState<string | null>(null);
+  /**
+   * The photo's proposed rewrite of her bio/personality/interests, awaiting a
+   * decision. Held in state ONLY — nothing is written until Accept, so
+   * navigating away or reloading discards it, which is the safe default for a
+   * change that would overwrite what an operator wrote.
+   */
+  const [proposedProfile, setProposedProfile] = useState<
+    NonNullable<CharacterPersonaView['proposedProfile']> | null
+  >(null);
+  const [applyingProfile, setApplyingProfile] = useState(false);
 
   const [identityOpen, setIdentityOpen] = useState(false);
   const [dnaForm, setDnaForm] = useState<Record<string, string>>(dnaToForm(undefined));
@@ -212,6 +242,13 @@ export default function AdminCharacterDetailPage() {
       })
       .then(() => adminCharactersApi.content(characterId))
       .then((res) => setContent(res.assets))
+      .then(() => adminCharactersApi.getPersona(characterId))
+      .then((persona) => {
+        setAvatarPersona(persona);
+        const form = personaToForm(persona.persona);
+        setAvatarPersonaForm(form);
+        setAvatarPersonaOriginalForm(form);
+      })
       .catch((err) => {
         if (err instanceof ApiRequestError && err.status === 404) setNotFound(true);
         else setError("Couldn't load this character.");
@@ -414,6 +451,144 @@ export default function AdminCharacterDetailPage() {
       );
     } finally {
       setAutofilling(false);
+    }
+  }
+
+  /**
+   * Saves ONLY the fields the admin actually changed in this session — see
+   * personaFormDiff's own note on why that matters (it's what keeps
+   * editedFields accurate, so regeneration knows exactly what to protect).
+   */
+  async function handleSaveAvatarPersona(characterId: string) {
+    if (avatarPersonaBusy) return;
+    const edits = personaFormDiff(avatarPersonaOriginalForm, avatarPersonaForm);
+    if (Object.keys(edits).length === 0) {
+      setAvatarPersonaOpen(false);
+      return;
+    }
+    setAvatarPersonaBusy(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = await adminCharactersApi.savePersona(characterId, edits);
+      setAvatarPersona(updated);
+      const form = personaToForm(updated.persona);
+      setAvatarPersonaForm(form);
+      setAvatarPersonaOriginalForm(form);
+      setAvatarPersonaOpen(false);
+      setAvatarPersonaNotice('Details saved.');
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't save her persona.",
+      );
+    } finally {
+      setAvatarPersonaBusy(false);
+    }
+  }
+
+  /**
+   * Re-analyses her current primary reference image. Writes immediately —
+   * unlike Autofill, there is no draft step, because the protection here is
+   * structural: regenerateCharacterPersona never overwrites a field already
+   * in editedFields, so nothing hand-written can be lost by running this.
+   */
+  async function handleRegenerateAvatarPersona(characterId: string) {
+    if (regeneratingPersona) return;
+    setRegeneratingPersona(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = await adminCharactersApi.regeneratePersona(characterId);
+      setAvatarPersona(updated);
+      const form = personaToForm(updated.persona);
+      setAvatarPersonaForm(form);
+      setAvatarPersonaOriginalForm(form);
+      setProposedProfile(updated.proposedProfile ?? null);
+      const applied = updated.appliedProfileFields ?? [];
+      setAvatarPersonaNotice(
+        [
+          'Details generated from her photo.',
+          applied.length > 0
+            ? `Her ${applied.join(', ')} ${applied.length === 1 ? 'was' : 'were'} empty, so ${
+                applied.length === 1 ? 'it was' : 'they were'
+              } filled in automatically.`
+            : null,
+          updated.editedFields.length > 0
+            ? `${updated.editedFields.length} field${
+                updated.editedFields.length === 1 ? '' : 's'
+              } you wrote yourself ${
+                updated.editedFields.length === 1 ? 'was' : 'were'
+              } kept unchanged.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      );
+      if (applied.length > 0) load(); // the Persona section above just changed
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't regenerate her persona.",
+      );
+    } finally {
+      setRegeneratingPersona(false);
+    }
+  }
+
+  /**
+   * Applies the photo's proposed bio through the SAME PATCH the persona
+   * editor above uses. No dedicated write path exists for this, deliberately:
+   * accepting a proposal is an ordinary profile edit that happens to have
+   * been drafted by a model, and routing it through the existing endpoint
+   * means it inherits that endpoint's validation.
+   */
+  async function handleAcceptProposedProfile(characterId: string) {
+    if (!proposedProfile || applyingProfile) return;
+    setApplyingProfile(true);
+    setAvatarPersonaError(null);
+    try {
+      await adminCharactersApi.update(characterId, {
+        ...(proposedProfile.shortBio ? { shortBio: proposedProfile.shortBio } : {}),
+        ...(proposedProfile.personality ? { personality: proposedProfile.personality } : {}),
+        ...(proposedProfile.interests ? { interests: proposedProfile.interests } : {}),
+      });
+      setProposedProfile(null);
+      setAvatarPersonaNotice('Her profile now matches her photo.');
+      load(); // re-read so the Persona section above shows the accepted text
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't update her profile.",
+      );
+    } finally {
+      setApplyingProfile(false);
+    }
+  }
+
+  /**
+   * Hands a pinned field (or all of them) back to autopilot. The pin is
+   * cleared, the text stands until the next generation replaces it — so this
+   * is safe to click and does not silently blank anything.
+   */
+  async function handleReleasePersonaField(characterId: string, field?: string) {
+    if (avatarPersonaBusy) return;
+    setAvatarPersonaBusy(true);
+    setAvatarPersonaError(null);
+    setAvatarPersonaNotice(null);
+    try {
+      const updated = field
+        ? await adminCharactersApi.releasePersonaField(characterId, field)
+        : await adminCharactersApi.releaseAllPersonaFields(characterId);
+      setAvatarPersona(updated);
+      setAvatarPersonaNotice(
+        field
+          ? 'Her photo will update that field again next time you generate.'
+          : 'All fields released — her photo controls everything again.',
+      );
+    } catch (err) {
+      setAvatarPersonaError(
+        err instanceof ApiRequestError ? err.message : "Couldn't release that field.",
+      );
+    } finally {
+      setAvatarPersonaBusy(false);
     }
   }
 
@@ -637,6 +812,267 @@ export default function AdminCharacterDetailPage() {
               <dt className="text-xs uppercase tracking-wide text-zinc-500">Interests</dt>
               <dd className="text-zinc-300">{character.interests.join(', ') || '—'}</dd>
             </div>
+          </dl>
+        )}
+      </section>
+
+      {/* ---------------- Life details from her photo (Phase 2) ----------------
+       *
+       * DELIBERATELY NOT CALLED "PERSONA". The section above is already named
+       * Persona and already has an Edit button; naming this one "Avatar-derived
+       * persona" with its own Edit button put two near-identical controls a few
+       * hundred pixels apart, and in the first hands-on test the wrong one was
+       * clicked twice in a row. The wording here names the INPUT (her photo)
+       * and the OUTPUT (life details) instead, which is also what an operator
+       * is actually thinking about.
+       */}
+      <section className="mb-10">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+            Life details from her photo
+          </h2>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              disabled={regeneratingPersona || primaryReferences.length === 0}
+              title={
+                primaryReferences.length === 0
+                  ? 'Add a primary reference photo first'
+                  : undefined
+              }
+              onClick={() => void handleRegenerateAvatarPersona(character.id)}
+              className="text-sm text-rose-400 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {regeneratingPersona ? 'Reading her photo…' : 'Generate from photo'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!avatarPersonaOpen) {
+                  setAvatarPersonaForm(avatarPersonaOriginalForm);
+                }
+                setAvatarPersonaOpen((o) => !o);
+              }}
+              className="text-sm text-rose-400 hover:text-rose-300"
+            >
+              {avatarPersonaOpen ? 'Cancel' : 'Edit details'}
+            </button>
+          </div>
+        </div>
+
+        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+          Her everyday life — work, routine, interests, how she jokes and flirts — read from her
+          primary reference photo. This is added to the Persona above in chat, never replaces it.
+          Anything you type in here is yours: generating again leaves your edits untouched.
+        </p>
+
+        {primaryReferences.length === 0 && (
+          <p className="mb-3 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+            No primary reference photo yet — add one below before generating.
+          </p>
+        )}
+
+        {avatarPersona?.generatedAt && (
+          <p className="mb-3 text-xs text-zinc-500">
+            Last generated from her photo {new Date(avatarPersona.generatedAt).toLocaleString()}.
+          </p>
+        )}
+
+        {/* How much of her is still on autopilot, stated rather than implied.
+            Pinned fields stop tracking her photo, so the count and the way
+            back both belong where an operator will see them. */}
+        {avatarPersona && avatarPersona.editedFields.length > 0 && (
+          <p className="mb-3 flex flex-wrap items-center gap-2 text-xs text-amber-300/90">
+            <span>
+              {avatarPersona.editedFields.length} field
+              {avatarPersona.editedFields.length === 1 ? '' : 's'} you wrote by hand
+              {avatarPersona.editedFields.length === 1 ? ' is' : ' are'} kept as-is — generating
+              from her photo will not change {avatarPersona.editedFields.length === 1 ? 'it' : 'them'}.
+            </span>
+            <button
+              type="button"
+              disabled={avatarPersonaBusy}
+              onClick={() => void handleReleasePersonaField(character.id)}
+              className="text-rose-400 underline hover:text-rose-300 disabled:opacity-50"
+            >
+              Release all
+            </button>
+          </p>
+        )}
+
+        {avatarPersonaError && (
+          <p role="alert" className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
+            {avatarPersonaError}
+          </p>
+        )}
+        {avatarPersonaNotice && !avatarPersonaOpen && (
+          <p role="status" aria-live="polite" className="mb-3 rounded-lg border border-emerald-900 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+            {avatarPersonaNotice}
+          </p>
+        )}
+
+        {/* The photo's take on her written profile, awaiting a decision.
+            Shown against the current text so the operator is comparing, not
+            trusting — and nothing is written until Accept. */}
+        {proposedProfile && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+            <p className="text-sm font-medium text-amber-200">
+              Her photo suggests a different profile
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-200/80">
+              The Persona above was written before this photo, and the two disagree. Accepting
+              replaces the fields shown; her current text is on the left. Nothing has been saved
+              yet.
+            </p>
+
+            <dl className="mt-3 space-y-3 text-sm">
+              {(
+                [
+                  ['Short bio', character.shortBio, proposedProfile.shortBio],
+                  ['Personality', character.personality, proposedProfile.personality],
+                  [
+                    'Interests',
+                    character.interests.join(', '),
+                    proposedProfile.interests?.join(', '),
+                  ],
+                ] as Array<[string, string, string | undefined]>
+              )
+                .filter(([, , next]) => Boolean(next))
+                .map(([label, current, next]) => (
+                  <div key={label}>
+                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{label}</dt>
+                    <dd className="mt-1 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2 text-zinc-500">
+                        <span className="block text-[10px] uppercase tracking-wide">Now</span>
+                        {current || '—'}
+                      </div>
+                      <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-zinc-200">
+                        <span className="block text-[10px] uppercase tracking-wide text-emerald-400">
+                          From her photo
+                        </span>
+                        {next}
+                      </div>
+                    </dd>
+                  </div>
+                ))}
+            </dl>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={applyingProfile}
+                onClick={() => void handleAcceptProposedProfile(character.id)}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {applyingProfile ? 'Applying…' : 'Accept and replace'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setProposedProfile(null)}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+              >
+                Keep what she has
+              </button>
+            </div>
+          </div>
+        )}
+
+        {avatarPersonaOpen ? (
+          <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+            {PERSONA_FIELDS.map((field) => (
+              <label key={field.key} className="block">
+                <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  {field.label}
+                  {avatarPersona?.editedFields.includes(field.key) && (
+                    <span className="ml-1.5 rounded bg-zinc-800 px-1 py-0.5 text-[9px] normal-case tracking-normal text-zinc-400">
+                      edited
+                    </span>
+                  )}
+                </span>
+                <input
+                  type={field.kind === 'number' ? 'number' : 'text'}
+                  value={avatarPersonaForm[field.key] ?? ''}
+                  onChange={(e) =>
+                    setAvatarPersonaForm({ ...avatarPersonaForm, [field.key]: e.target.value })
+                  }
+                  placeholder={field.kind === 'list' ? 'comma, separated, list' : ''}
+                  className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+                />
+              </label>
+            ))}
+            {avatarPersona?.persona.sourceSummary && (
+              <p className="text-xs text-zinc-500">
+                Source summary (generator-only, never sent to chat):{' '}
+                {avatarPersona.persona.sourceSummary}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={avatarPersonaBusy}
+                onClick={() => void handleSaveAvatarPersona(character.id)}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {avatarPersonaBusy ? 'Saving…' : 'Save details'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAvatarPersonaForm(avatarPersonaOriginalForm);
+                  setAvatarPersonaOpen(false);
+                }}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <dl className="grid gap-3 rounded-lg border border-zinc-800 p-4 text-sm sm:grid-cols-2">
+            {PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).length ===
+            0 ? (
+              <div className="text-zinc-500 sm:col-span-2">
+                Nothing here yet.{' '}
+                {primaryReferences.length > 0
+                  ? 'Use Generate from photo, or Edit details to write them by hand.'
+                  : 'Add a primary reference photo below, then use Generate from photo.'}
+              </div>
+            ) : (
+              PERSONA_FIELDS.filter((field) => (avatarPersonaForm[field.key] ?? '').length > 0).map(
+                (field) => (
+                  <div key={field.key}>
+                    <dt className="text-xs uppercase tracking-wide text-zinc-500">
+                      {field.label}
+                      {avatarPersona?.editedFields.includes(field.key) && (
+                        <>
+                          {/* A pinned field no longer tracks her photo. Saying
+                              so plainly, with the way back attached, is what
+                              stops this becoming a one-way door nobody
+                              remembers walking through. */}
+                          <span
+                            title="You wrote this by hand, so generating from her photo leaves it alone."
+                            className="ml-1.5 rounded bg-amber-950 px-1 py-0.5 text-[9px] normal-case tracking-normal text-amber-300"
+                          >
+                            yours
+                          </span>
+                          <button
+                            type="button"
+                            disabled={avatarPersonaBusy}
+                            onClick={() =>
+                              void handleReleasePersonaField(character.id, field.key)
+                            }
+                            className="ml-1.5 text-[9px] normal-case tracking-normal text-rose-400 hover:text-rose-300 disabled:opacity-50"
+                          >
+                            release
+                          </button>
+                        </>
+                      )}
+                    </dt>
+                    <dd className="text-zinc-300">{avatarPersonaForm[field.key]}</dd>
+                  </div>
+                ),
+              )
+            )}
           </dl>
         )}
       </section>
